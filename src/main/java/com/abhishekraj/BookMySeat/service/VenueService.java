@@ -3,7 +3,9 @@ package com.abhishekraj.BookMySeat.service;
 import com.abhishekraj.BookMySeat.dto.VenueRequest;
 import com.abhishekraj.BookMySeat.dto.VenueResponse;
 import com.abhishekraj.BookMySeat.entity.Venue;
+import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
+import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import java.util.List;
 public class VenueService {
 
 	private final VenueRepository venueRepository;
+	private final ShowRepository showRepository;
 
 	@Transactional
 	public VenueResponse create(VenueRequest request) {
@@ -47,7 +50,11 @@ public class VenueService {
 
 	@Transactional
 	public void delete(Long id) {
-		venueRepository.delete(findVenue(id));
+		Venue venue = findVenue(id);
+		if (showRepository.existsByVenueId(id)) {
+			throw new ConflictException("Cannot delete venue " + id + " because it has shows. Delete its shows first.");
+		}
+		venueRepository.delete(venue);
 	}
 
 	private Venue findVenue(Long id) {

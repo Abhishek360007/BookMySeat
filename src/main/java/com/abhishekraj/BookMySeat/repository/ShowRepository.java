@@ -14,4 +14,6 @@ public interface ShowRepository extends JpaRepository<Show, Long> {
 
 	@EntityGraph(attributePaths = "venue")
 	List<Show> findByVenueId(Long venueId);
+
+	boolean existsByVenueId(Long venueId);
 }
