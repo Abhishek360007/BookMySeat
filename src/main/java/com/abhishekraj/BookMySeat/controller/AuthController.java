@@ -1,5 +1,7 @@
 package com.abhishekraj.BookMySeat.controller;
 
+import com.abhishekraj.BookMySeat.dto.LoginRequest;
+import com.abhishekraj.BookMySeat.dto.LoginResponse;
 import com.abhishekraj.BookMySeat.dto.RegisterRequest;
 import com.abhishekraj.BookMySeat.dto.UserResponse;
 import com.abhishekraj.BookMySeat.service.AuthService;
@@ -19,5 +21,10 @@ public class AuthController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public UserResponse register(@Valid @RequestBody RegisterRequest request) {
 		return authService.register(request);
+	}
+
+	@PostMapping("/login")
+	public LoginResponse login(@Valid @RequestBody LoginRequest request) {
+		return authService.login(request);
 	}
 }
