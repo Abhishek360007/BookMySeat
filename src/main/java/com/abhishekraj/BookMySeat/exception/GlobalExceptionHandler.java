@@ -2,6 +2,7 @@ package com.abhishekraj.BookMySeat.exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -48,6 +49,14 @@ public class GlobalExceptionHandler {
 	public ProblemDetail handleBadJson(HttpMessageNotReadableException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Request body is missing or not valid JSON");
 		problem.setTitle("Malformed request");
+		return problem;
+	}
+
+	@ExceptionHandler(OptimisticLockingFailureException.class)
+	public ProblemDetail handleOptimisticLock(OptimisticLockingFailureException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+				"These seats were just booked by someone else. Please pick other seats.");
+		problem.setTitle("Seat conflict");
 		return problem;
 	}
 
