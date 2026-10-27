@@ -8,6 +8,7 @@ import com.abhishekraj.BookMySeat.entity.Role;
 import com.abhishekraj.BookMySeat.entity.User;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.InvalidCredentialsException;
+import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.security.JwtService;
 import lombok.RequiredArgsConstructor;
@@ -53,5 +54,12 @@ public class AuthService {
 
 		String token = jwtService.generateToken(user);
 		return new LoginResponse(token, "Bearer", jwtService.getExpirationSeconds());
+	}
+
+	@Transactional(readOnly = true)
+	public UserResponse getCurrentUser(Long userId) {
+		return userRepository.findById(userId)
+				.map(UserResponse::from)
+				.orElseThrow(() -> new ResourceNotFoundException("User not found"));
 	}
 }
