@@ -4,7 +4,9 @@ import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
+import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
+import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ public class ShowService {
 
 	private final ShowRepository showRepository;
 	private final VenueRepository venueRepository;
+	private final SeatRepository seatRepository;
 
 	@Transactional
 	public ShowResponse create(ShowRequest request) {
@@ -49,7 +52,11 @@ public class ShowService {
 
 	@Transactional
 	public void delete(Long id) {
-		showRepository.delete(findShow(id));
+		Show show = findShow(id);
+		if (seatRepository.existsByShowId(id)) {
+			throw new ConflictException("Cannot delete show " + id + " because it has seats.");
+		}
+		showRepository.delete(show);
 	}
 
 	private void applyRequest(Show show, ShowRequest request) {
