@@ -94,8 +94,8 @@ Full interactive docs are at `/swagger-ui.html` once the app is running.
 ### Run
 
 ```bash
-git clone https://github.com/Abhishek360007/bookmyseat.git
-cd bookmyseat
+git clone https://github.com/Abhishek360007/BookMySeat.git
+cd BookMySeat
 ./mvnw spring-boot:run          # Windows: .\mvnw spring-boot:run
 ```
 
