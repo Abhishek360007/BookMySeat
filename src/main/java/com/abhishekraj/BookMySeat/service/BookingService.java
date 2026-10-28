@@ -15,6 +15,8 @@ import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,9 +43,18 @@ public class BookingService {
 	private final Clock clock;
 	private final long cancelCutoffMinutes;
 
+	// Business metrics at /actuator/metrics. Tags stay low-cardinality: never user or seat ids.
+	private final Counter bookingsConfirmed;
+	private final Counter bookingsCancelled;
+	private final Counter conflictHoldMissing;
+	private final Counter conflictAlreadyBooked;
+	private final Counter holdSuccess;
+	private final Counter holdConflict;
+
 	public BookingService(BookingRepository bookingRepository, SeatRepository seatRepository,
 			ShowRepository showRepository, UserRepository userRepository, SeatHoldService seatHoldService,
-			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes) {
+			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes,
+			MeterRegistry meterRegistry) {
 		this.bookingRepository = bookingRepository;
 		this.seatRepository = seatRepository;
 		this.showRepository = showRepository;
@@ -51,6 +62,12 @@ public class BookingService {
 		this.seatHoldService = seatHoldService;
 		this.clock = clock;
 		this.cancelCutoffMinutes = cancelCutoffMinutes;
+		this.bookingsConfirmed = meterRegistry.counter("bookings.confirmed");
+		this.bookingsCancelled = meterRegistry.counter("bookings.cancelled");
+		this.conflictHoldMissing = meterRegistry.counter("booking.conflicts", "reason", "hold_missing");
+		this.conflictAlreadyBooked = meterRegistry.counter("booking.conflicts", "reason", "already_booked");
+		this.holdSuccess = meterRegistry.counter("seat.holds", "result", "success");
+		this.holdConflict = meterRegistry.counter("seat.holds", "result", "conflict");
 	}
 
 	@Transactional(readOnly = true)
@@ -61,14 +78,17 @@ public class BookingService {
 
 		for (Seat seat : seats) {
 			if (seat.getStatus() == SeatStatus.BOOKED) {
+				conflictAlreadyBooked.increment();
 				throw new ConflictException("Seat " + seat.getSeatNumber() + " is already booked");
 			}
 		}
 
 		List<Long> seatIds = seats.stream().map(Seat::getId).toList();
 		if (!seatHoldService.holdAll(request.showId(), seatIds, userId)) {
+			holdConflict.increment();
 			throw new ConflictException("One or more seats are being held by someone else. Please choose different seats.");
 		}
+		holdSuccess.increment();
 
 		return new HoldResponse(request.showId(), seatIds,
 				seats.stream().map(Seat::getSeatNumber).toList(),
@@ -87,11 +107,13 @@ public class BookingService {
 		List<Seat> seats = loadSeatsForShow(show.getId(), request.seatIds());
 
 		if (!seatHoldService.isHeldBy(show.getId(), seatIds, userId)) {
+			conflictHoldMissing.increment();
 			throw new ConflictException("Your hold has expired or these seats aren't held by you. Hold them again.");
 		}
 
 		for (Seat seat : seats) {
 			if (seat.getStatus() != SeatStatus.AVAILABLE) {
+				conflictAlreadyBooked.increment();
 				throw new ConflictException("Seat " + seat.getSeatNumber() + " is already booked");
 			}
 			seat.setStatus(SeatStatus.BOOKED); // @Version is checked and bumped on commit
@@ -108,6 +130,7 @@ public class BookingService {
 			}
 		});
 
+		bookingsConfirmed.increment();
 		return BookingResponse.from(booking);
 	}
 
@@ -126,6 +149,7 @@ public class BookingService {
 					+ " minutes before the show starts");
 		}
 		booking.cancel();
+		bookingsCancelled.increment();
 		return BookingResponse.from(booking);
 	}
 

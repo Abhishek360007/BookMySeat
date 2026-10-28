@@ -146,6 +146,18 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<!-- Writes META-INF/build-info.properties, shown by /actuator/info -->
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+						<configuration>
+							<!-- Default is the fixed reproducible-build timestamp (1980-02-01) -->
+							<time>${maven.build.timestamp}</time>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

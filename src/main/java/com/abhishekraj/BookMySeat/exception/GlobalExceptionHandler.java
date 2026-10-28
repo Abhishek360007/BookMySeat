@@ -1,5 +1,7 @@
 package com.abhishekraj.BookMySeat.exception;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -19,6 +21,13 @@ import java.util.Map;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+	// Counted here because a lost @Version race only surfaces at commit, after BookingService returns
+	private final Counter conflictLockLost;
+
+	public GlobalExceptionHandler(MeterRegistry meterRegistry) {
+		this.conflictLockLost = meterRegistry.counter("booking.conflicts", "reason", "lock_lost");
+	}
 
 	@ExceptionHandler(ResourceNotFoundException.class)
 	public ProblemDetail handleNotFound(ResourceNotFoundException ex) {
@@ -55,6 +64,7 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(OptimisticLockingFailureException.class)
 	public ProblemDetail handleOptimisticLock(OptimisticLockingFailureException ex) {
+		conflictLockLost.increment();
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
 				"These seats were just booked by someone else. Please pick other seats.");
 		problem.setTitle("Seat conflict");

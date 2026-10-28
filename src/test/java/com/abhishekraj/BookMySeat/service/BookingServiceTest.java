@@ -14,6 +14,7 @@ import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,7 +55,7 @@ class BookingServiceTest {
 	@BeforeEach
 	void setUp() {
 		bookingService = new BookingService(bookingRepository, seatRepository, showRepository, userRepository,
-				seatHoldService, Clock.fixed(NOW, ZoneOffset.UTC), 120);
+				seatHoldService, Clock.fixed(NOW, ZoneOffset.UTC), 120, new SimpleMeterRegistry());
 	}
 
 	@Test
