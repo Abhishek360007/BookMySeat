@@ -18,3 +18,6 @@ jobs:
       # Runs unit tests and the Testcontainers tests (Ubuntu runners have Docker)
       - name: Build and test
         run: ./mvnw -B verify
+      # A broken Dockerfile fails the build too
+      - name: Build Docker image
+        run: docker build -t bookmyseat:ci .

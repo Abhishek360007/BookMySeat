@@ -16,6 +16,7 @@
 - **Flyway-managed schema:** versioned SQL migrations, with Hibernate set to `validate`. CHECK constraints protect prices and totals in the database itself.
 - **Stateless JWT security:** HS256 tokens, BCrypt passwords, and `USER` / `ADMIN` roles. Errors are RFC 9457 `ProblemDetail` responses.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
+- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, and a layered, non-root Docker image.
 
 ## Architecture
 
@@ -91,7 +92,8 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/bookings` | User | Confirm held seats (total computed on the server) |
 | POST | `/api/bookings/{id}/cancel` | User | Cancel, up to 2 hours before the show |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
-| GET | `/actuator/health` | Public | Health check |
+| GET | `/api/admin/shows/{showId}/bookings?status=&page=&size=&sort=` | Admin | Paginated bookings for a show (default `CONFIRMED`, newest first, max 100 per page) |
+| GET | `/api/admin/shows/{showId}/summary` | Admin | Seats booked / held / available, confirmed bookings, revenue |
 
 `401` means no valid token, and `403` means a valid token without the required role.
 
@@ -119,6 +121,40 @@ Then open **http://localhost:8080/swagger-ui.html**.
 
 Hold duration and the cancellation cutoff are in [`application.properties`](src/main/resources/application.properties).
 
+## Run with Docker
+
+No Java needed: the app runs as a container next to PostgreSQL and Redis.
+
+```powershell
+copy .env.example .env      # then set ADMIN_EMAIL, ADMIN_PASSWORD and JWT_SECRET (.env is git-ignored)
+docker compose --profile app up -d --build
+```
+
+Open **http://localhost:8080/swagger-ui.html**. To stop only the app container and keep the databases running, use `docker compose stop app`.
+
+- **Multi-stage build:** the JDK and Maven exist only in the build stage; the runtime image has just the JRE.
+- **Layered for caching:** dependencies are downloaded before the source is copied, and the jar is split into Spring Boot layers. A code change rebuilds only the small application layer (about 0.4 MB); a cached rebuild takes about 15 seconds.
+- **Non-root:** the app runs as `uid=1001(app)`.
+- **Profile-gated:** plain `docker compose up`, and Spring Boot's own Docker Compose support, still start only the databases.
+
+## Monitoring
+
+| Endpoint | Access | Shows |
+|---|---|---|
+| `/actuator/health` | Public | `UP` / `DOWN` only. Admins also see components: `db`, `redis`, disk. |
+| `/actuator/health/liveness`, `/actuator/health/readiness` | Public | Probes for Kubernetes or a load balancer |
+| `/actuator/info` | Public | Build artifact, version and time |
+| `/actuator/metrics/{name}` | Admin | JVM, HTTP and the business metrics below |
+
+| Metric | Tags | Counts |
+|---|---|---|
+| `bookings.confirmed` | none | Successful bookings |
+| `bookings.cancelled` | none | Cancellations |
+| `seat.holds` | `result` = `success` / `conflict` | Hold attempts, including lost hold races |
+| `booking.conflicts` | `reason` = `hold_missing` / `already_booked` / `lock_lost` | Why confirms were rejected; `lock_lost` is an optimistic-lock race lost at commit |
+
+Tags never contain user or seat ids, which keeps the number of distinct metrics small.
+
 ## Tests
 
 ```powershell
@@ -127,12 +163,13 @@ Hold duration and the cancellation cutoff are in [`application.properties`](src/
 
 | Kind | Test | Covers |
 |---|---|---|
+| HTTP (MockMvc + Testcontainers) | `BookingApiTest` | The real HTTP contract with real logins: 401/403/400/409 `problem+json` shapes, field names, and the full hold → confirm → list → cancel flow |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
 | Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and Flyway migrations V1 and V2 apply to an empty database |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, then builds the Docker image.
 
 ## Roadmap
 
@@ -140,7 +177,8 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 2:** Registration, JWT login, role-based security
 - [x] **Week 3:** Seat maps, Redis holds, confirm/cancel with optimistic locking, concurrency tests
 - [x] **Week 4:** Flyway migrations, price snapshots, cancellation cutoff, GitHub Actions CI
-- [ ] **Later:** more features to come
+- [x] **Week 5:** Admin reports with pagination, HTTP-level API tests, Actuator health and metrics, Docker image
+- [ ] **Next:** deploy the image to a public URL with live Swagger docs
 
 ## Author
 

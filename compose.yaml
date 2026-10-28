@@ -11,3 +11,21 @@ services:
     image: 'redis:8'
     ports:
       - '6379'
+  # Only started with: docker compose --profile app up -d --build
+  # (plain "docker compose up" and Spring's Docker Compose support start just the databases)
+  app:
+    build: .
+    profiles: ["app"]
+    ports:
+      - '8080:8080'
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/mydatabase
+      SPRING_DATASOURCE_USERNAME: myuser
+      SPRING_DATASOURCE_PASSWORD: secret
+      SPRING_DATA_REDIS_HOST: redis
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - postgres
+      - redis
