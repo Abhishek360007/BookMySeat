@@ -7,6 +7,10 @@ services:
       - 'POSTGRES_USER=myuser'
     ports:
       - '5432'
+    # Named volume: removing containers (e.g. "docker compose down") keeps the data.
+    # Postgres 18 keeps data under /var/lib/postgresql (not .../data as in older images)
+    volumes:
+      - pgdata:/var/lib/postgresql
   redis:
     image: 'redis:8'
     ports:
@@ -29,3 +33,6 @@ services:
     depends_on:
       - postgres
       - redis
+
+volumes:
+  pgdata:
