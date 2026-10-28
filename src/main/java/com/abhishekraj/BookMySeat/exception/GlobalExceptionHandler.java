@@ -3,6 +3,7 @@ package com.abhishekraj.BookMySeat.exception;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.core.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -72,6 +73,15 @@ public class GlobalExceptionHandler {
 	public ProblemDetail handleInvalidCredentials(InvalidCredentialsException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
 		problem.setTitle("Authentication failed");
+		return problem;
+	}
+
+	// e.g. ?sort=unknownField on a paged endpoint
+	@ExceptionHandler(PropertyReferenceException.class)
+	public ProblemDetail handleBadSort(PropertyReferenceException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+				"Cannot sort by '" + ex.getPropertyName() + "'");
+		problem.setTitle("Invalid sort");
 		return problem;
 	}
 
