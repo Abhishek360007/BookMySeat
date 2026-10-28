@@ -15,12 +15,15 @@ import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -28,7 +31,6 @@ import java.util.List;
 import java.util.Set;
 
 @Service
-@RequiredArgsConstructor
 public class BookingService {
 
 	private final BookingRepository bookingRepository;
@@ -36,10 +38,26 @@ public class BookingService {
 	private final ShowRepository showRepository;
 	private final UserRepository userRepository;
 	private final SeatHoldService seatHoldService;
+	private final Clock clock;
+	private final long cancelCutoffMinutes;
+
+	public BookingService(BookingRepository bookingRepository, SeatRepository seatRepository,
+			ShowRepository showRepository, UserRepository userRepository, SeatHoldService seatHoldService,
+			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes) {
+		this.bookingRepository = bookingRepository;
+		this.seatRepository = seatRepository;
+		this.showRepository = showRepository;
+		this.userRepository = userRepository;
+		this.seatHoldService = seatHoldService;
+		this.clock = clock;
+		this.cancelCutoffMinutes = cancelCutoffMinutes;
+	}
 
 	@Transactional(readOnly = true)
 	public HoldResponse holdSeats(Long userId, HoldRequest request) {
-		List<Seat> seats = loadSeatsForShow(request.showId(), request.seatIds());
+		Show show = findShow(request.showId());
+		requireNotStarted(show);
+		List<Seat> seats = loadSeatsForShow(show.getId(), request.seatIds());
 
 		for (Seat seat : seats) {
 			if (seat.getStatus() == SeatStatus.BOOKED) {
@@ -64,8 +82,8 @@ public class BookingService {
 	@Transactional
 	public BookingResponse confirm(Long userId, ConfirmBookingRequest request) {
 		Set<Long> seatIds = new LinkedHashSet<>(request.seatIds());
-		Show show = showRepository.findById(request.showId())
-				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + request.showId()));
+		Show show = findShow(request.showId());
+		requireNotStarted(show);
 		List<Seat> seats = loadSeatsForShow(show.getId(), request.seatIds());
 
 		if (!seatHoldService.isHeldBy(show.getId(), seatIds, userId)) {
@@ -101,6 +119,12 @@ public class BookingService {
 		if (booking.getStatus() == BookingStatus.CANCELLED) {
 			throw new ConflictException("Booking " + bookingId + " is already cancelled");
 		}
+		// Allowed exactly at the cutoff, refused one second after
+		Instant cutoff = booking.getShow().getStartTime().minus(Duration.ofMinutes(cancelCutoffMinutes));
+		if (Instant.now(clock).isAfter(cutoff)) {
+			throw new ConflictException("Cancellations close " + cancelCutoffMinutes
+					+ " minutes before the show starts");
+		}
 		booking.cancel();
 		return BookingResponse.from(booking);
 	}
@@ -109,6 +133,17 @@ public class BookingService {
 	public List<BookingResponse> myBookings(Long userId) {
 		return bookingRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
 				.map(BookingResponse::from).toList();
+	}
+
+	private Show findShow(Long showId) {
+		return showRepository.findById(showId)
+				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + showId));
+	}
+
+	private void requireNotStarted(Show show) {
+		if (!Instant.now(clock).isBefore(show.getStartTime())) {
+			throw new ConflictException("Show " + show.getId() + " has already started");
+		}
 	}
 
 	private List<Seat> loadSeatsForShow(Long showId, List<Long> requestedIds) {
