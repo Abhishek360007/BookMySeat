@@ -5,6 +5,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
@@ -38,6 +39,10 @@ public class Booking {
 	@Column(nullable = false, length = 20)
 	private BookingStatus status;
 
+	// Snapshot at booking time: later price changes must not alter past bookings
+	@Column(name = "total_amount", nullable = false, precision = 10, scale = 2)
+	private BigDecimal totalAmount;
+
 	@Column(nullable = false)
 	private Instant createdAt;
 
@@ -51,6 +56,7 @@ public class Booking {
 		this.show = show;
 		this.seats = seats;
 		this.status = BookingStatus.CONFIRMED;
+		this.totalAmount = show.getPrice().multiply(BigDecimal.valueOf(seats.size()));
 		this.createdAt = Instant.now();
 	}
 
