@@ -1,5 +1,7 @@
 # BookMySeat 🎟️
 
+[![CI](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml)
+
 A movie-ticket booking REST API built with **Spring Boot 4**, focused on the hard part of ticketing: **making sure two people can never book the same seat**, even when 50 of them click at the same moment.
 
 ![Java](https://img.shields.io/badge/Java-21-orange)
