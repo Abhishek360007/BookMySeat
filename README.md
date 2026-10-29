@@ -8,6 +8,12 @@
 
 **Movie ticket booking API that guarantees one booking per seat under concurrent load.**
 
+### 🚀 [Live demo: Swagger UI](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
+
+> Free tier: the first load after a quiet period can take **about 3 minutes** while the app wakes up. After that it responds in about a second.
+
+**Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`. Call `POST /api/auth/login`, copy the `accessToken`, click **Authorize**, then hold and book seats on the "Dune: Part Three" show. Please don't use a real password if you register your own account.
+
 ## Highlights
 
 - **Redis seat holds with Lua:** selected seats are held for 5 minutes by one atomic script. Either every seat is held or none is, holds expire on their own, and this works across multiple app instances.
@@ -22,9 +28,9 @@
 
 ```mermaid
 flowchart LR
-    C[Client / Swagger UI] -->|JWT| API[Spring Boot 4 API]
-    API --> PG[(PostgreSQL 18<br/>Flyway-managed schema)]
-    API --> R[(Redis 8<br/>seat holds, 5-min TTL)]
+    C[Client / Swagger UI] -->|HTTPS + JWT| API[Spring Boot 4 API<br/>Docker on Render]
+    API --> PG[(Neon PostgreSQL 18<br/>Flyway-managed schema)]
+    API --> R[(Upstash Redis<br/>seat holds, 5-min TTL)]
 ```
 
 ## Booking flow
@@ -155,6 +161,36 @@ Open **http://localhost:8080/swagger-ui.html**. To stop only the app container a
 
 Tags never contain user or seat ids, which keeps the number of distinct metrics small.
 
+## Deployment
+
+The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1) to keep latency low:
+
+| Piece | Service | Notes |
+|---|---|---|
+| App | **Render** web service, built from this repo's `Dockerfile` | 512 MB RAM, 0.1 CPU; sleeps after 15 minutes without traffic |
+| Database | **Neon** PostgreSQL 18 | Direct (non-pooled) connection over TLS; Flyway migrates it on startup |
+| Holds | **Upstash** Redis | TLS (`rediss://`); the Lua hold/release scripts run unchanged |
+
+**Continuous deployment:**
+
+```mermaid
+flowchart LR
+    P[git push to main] --> CI[GitHub Actions<br/>tests + Docker build]
+    CI -->|green| R[Render builds the image<br/>and deploys]
+    R --> H{Health check<br/>/actuator/health/liveness}
+    H -->|UP| L[Live]
+```
+
+**Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. No secrets are in the repo, and production uses its own JWT secret.
+
+**Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
+
+**Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats, and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
+
+```powershell
+.\scripts\seed-demo.ps1 -BaseUrl https://bookmyseat-8j1e.onrender.com -AdminEmail <admin> -AdminPassword '<admin password>'
+```
+
 ## Tests
 
 ```powershell
@@ -178,7 +214,8 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 3:** Seat maps, Redis holds, confirm/cancel with optimistic locking, concurrency tests
 - [x] **Week 4:** Flyway migrations, price snapshots, cancellation cutoff, GitHub Actions CI
 - [x] **Week 5:** Admin reports with pagination, HTTP-level API tests, Actuator health and metrics, Docker image
-- [ ] **Next:** deploy the image to a public URL with live Swagger docs
+- [x] **Week 6:** Production profile, Neon + Upstash + Render deployment with CI-gated auto-deploy, demo seed script
+- [ ] **Later:** rate limiting on login and registration (now that registration is public)
 
 ## Author
 
