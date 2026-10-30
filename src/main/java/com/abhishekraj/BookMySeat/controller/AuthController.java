@@ -6,11 +6,15 @@ import com.abhishekraj.BookMySeat.dto.RefreshRequest;
 import com.abhishekraj.BookMySeat.dto.RegisterRequest;
 import com.abhishekraj.BookMySeat.dto.UserResponse;
 import com.abhishekraj.BookMySeat.service.AuthService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+@Tag(name = "Auth", description = "Register, log in, refresh and log out. No token needed; login and registration are rate-limited per IP.")
+@SecurityRequirements // public endpoints: no lock icon in Swagger
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor

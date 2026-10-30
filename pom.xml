@@ -176,9 +176,30 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
 					<!-- Tests don't run main(), which sets UTC; without this the JVM sends the OS zone
-					     (e.g. the legacy "Asia/Calcutta"), which newer Postgres rejects -->
-					<argLine>-Duser.timezone=UTC</argLine>
+					     (e.g. the legacy "Asia/Calcutta"), which newer Postgres rejects.
+					     @{argLine} keeps the JaCoCo agent that prepare-agent puts there. -->
+					<argLine>@{argLine} -Duser.timezone=UTC</argLine>
 				</configuration>
+			</plugin>
+			<!-- Test coverage: target/site/jacoco/index.html after "mvnw verify" -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.16</version>
+				<executions>
+					<execution>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

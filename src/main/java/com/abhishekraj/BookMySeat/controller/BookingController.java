@@ -6,6 +6,8 @@ import com.abhishekraj.BookMySeat.dto.HoldRequest;
 import com.abhishekraj.BookMySeat.dto.HoldResponse;
 import com.abhishekraj.BookMySeat.service.BookingService;
 import com.abhishekraj.BookMySeat.service.IdempotencyService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Optional;
 
+@Tag(name = "Bookings", description = "Hold seats for 5 minutes, confirm them into a booking, cancel, and list your bookings.")
 @RestController
 @RequestMapping("/api/bookings")
 @RequiredArgsConstructor
@@ -37,7 +40,9 @@ public class BookingController {
 		bookingService.releaseSeats(userId(jwt), request);
 	}
 
-	// Optional Idempotency-Key: retrying with the same key returns the original booking instead of a second attempt
+	@Operation(summary = "Confirm held seats into a booking",
+			description = "The total is computed on the server. Send an optional Idempotency-Key header to make retries safe: "
+					+ "the same key with the same seats returns the original booking (header Idempotent-Replayed: true).")
 	@PostMapping
 	public ResponseEntity<BookingResponse> confirm(@AuthenticationPrincipal Jwt jwt,
 			@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,

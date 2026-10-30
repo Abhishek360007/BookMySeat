@@ -4,6 +4,8 @@ import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.service.ShowService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.util.List;
 
+@Tag(name = "Shows", description = "Browse and search shows (public). Creating, updating and deleting needs an ADMIN token.")
 @RestController
 @RequestMapping("/api/shows")
 @RequiredArgsConstructor
@@ -28,12 +31,14 @@ public class ShowController {
 		return showService.create(request);
 	}
 
+	@SecurityRequirements
 	@GetMapping
 	public List<ShowResponse> getAll(@RequestParam(required = false) Long venueId) {
 		return showService.getAll(venueId);
 	}
 
 	// e.g. /api/shows/search?city=Mumbai&q=dune&from=2027-01-01T00:00:00Z&page=0&size=20
+	@SecurityRequirements
 	@GetMapping("/search")
 	public PageResponse<ShowResponse> search(@RequestParam(required = false) @Size(max = 50) String city,
 			@RequestParam(name = "q", required = false) @Size(max = 100) String text,
@@ -43,6 +48,7 @@ public class ShowController {
 		return showService.search(city, text, from, to, pageable);
 	}
 
+	@SecurityRequirements
 	@GetMapping("/{id}")
 	public ShowResponse getById(@PathVariable Long id) {
 		return showService.getById(id);

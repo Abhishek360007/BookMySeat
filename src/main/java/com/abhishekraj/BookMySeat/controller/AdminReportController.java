@@ -5,6 +5,7 @@ import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowSummaryResponse;
 import com.abhishekraj.BookMySeat.entity.BookingStatus;
 import com.abhishekraj.BookMySeat.service.AdminReportService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -12,6 +13,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.web.bind.annotation.*;
 
 // Secured as ADMIN-only in SecurityConfig ("/api/admin/**")
+@Tag(name = "Admin reports", description = "Paginated bookings per show and a sales summary. ADMIN only.")
 @RestController
 @RequestMapping("/api/admin/shows/{showId}")
 @RequiredArgsConstructor

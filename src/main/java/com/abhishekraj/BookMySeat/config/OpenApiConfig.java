@@ -10,7 +10,11 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @OpenAPIDefinition(
 		info = @Info(title = "BookMySeat API", version = "v1",
-				description = "Ticket booking REST API with JWT authentication"),
+				description = """
+						Movie ticket booking API that guarantees one booking per seat under concurrent load.
+
+						**Try it:** call `POST /api/auth/login` with the demo account `demo@bookmyseat.dev` / `DemoPass123`, 						copy `accessToken`, click **Authorize**, then hold and confirm seats. 						Source: [github.com/Abhishek360007/BookMySeat](https://github.com/Abhishek360007/BookMySeat)
+						"""),
 		security = @SecurityRequirement(name = "bearerAuth"))
 @SecurityScheme(name = "bearerAuth", type = SecuritySchemeType.HTTP, scheme = "bearer", bearerFormat = "JWT")
 public class OpenApiConfig {

@@ -18,6 +18,13 @@ jobs:
       # Runs unit tests and the Testcontainers tests (Ubuntu runners have Docker)
       - name: Build and test
         run: ./mvnw -B verify
+      # Coverage table on the run's summary page, plus the full HTML report as a downloadable artifact
+      - name: Coverage summary
+        run: python3 .github/scripts/coverage_summary.py >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: target/site/jacoco/
       # A broken Dockerfile fails the build too
       - name: Build Docker image
         run: docker build -t bookmyseat:ci .
