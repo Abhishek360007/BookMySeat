@@ -10,7 +10,7 @@
 
 ### 🚀 [Live demo: Swagger UI](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
 
-> Free tier: the first load after a quiet period can take **about 3 minutes** while the app wakes up. After that it responds in about a second.
+> Free tier: the first load after a quiet period can take **about 2 minutes** while the app wakes up (if the first page shows an error, refresh it). After that it responds in about a second.
 
 **Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`. Call `POST /api/auth/login`, copy the `accessToken`, click **Authorize**, then hold and book seats on the "Dune: Part Three" show. Please don't use a real password if you register your own account.
 
@@ -201,7 +201,7 @@ flowchart LR
 
 **Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. No secrets are in the repo, and production uses its own JWT secret.
 
-**Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download.
+**Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download. On Render, waking from sleep went from about 197 s to about 125 s.
 
 **Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
 
