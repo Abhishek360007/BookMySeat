@@ -20,9 +20,9 @@
 - **Optimistic locking (`@Version`):** the database is the final guard. When two confirms race for a seat, exactly one commit wins.
 - **Proven with a 50-thread test:** Testcontainers tests fire 50 concurrent requests at one seat against real PostgreSQL and Redis, and CI runs them on every push.
 - **Flyway-managed schema:** versioned SQL migrations, with Hibernate set to `validate`. CHECK constraints protect prices and totals in the database itself.
-- **Stateless JWT security:** HS256 tokens, BCrypt passwords, and `USER` / `ADMIN` roles. Errors are RFC 9457 `ProblemDetail` responses.
+- **Hardened auth:** 15-minute JWT access tokens, rotating refresh tokens with stolen-token (reuse) detection, BCrypt passwords, `USER` / `ADMIN` roles, and per-IP rate limits on login and registration. Errors are RFC 9457 `ProblemDetail` responses.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
-- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, and a layered, non-root Docker image.
+- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
 
 ## Architecture
 
@@ -74,6 +74,12 @@ Measured by the Testcontainers tests in this repo: 50 threads are released at th
 
 **Flyway with `ddl-auto=validate`.** The schema changes only through reviewed, versioned SQL files (`V1__init.sql`, `V2__...`). Hibernate checks on startup that the entities match the schema, and a migration that was edited after it ran fails its checksum check.
 
+**Rotating refresh tokens.** Access tokens live 15 minutes, so a leaked one expires quickly. Refresh tokens are random 256-bit values stored only as SHA-256 hashes (a database leak reveals no usable tokens). Each refresh revokes the old token and issues a new one in the same "family"; if a revoked token is ever presented again, it was copied, so the whole family is revoked and both the thief and the user must log in again. A row lock stops two concurrent refreshes from both succeeding.
+
+**Rate limiting in Redis.** A fixed-window counter per IP (one atomic Lua `INCR` + `EXPIRE`) is shared by all app instances. Over the limit, the API answers `429` with `Retry-After`. If Redis is down, the limiter fails open after a 2-second timeout, so an outage never locks everyone out of logging in.
+
+**Request ids.** Every response carries `X-Request-Id`, every log line of that request includes it, and every error body has a `requestId` field, so a user's error report leads straight to the matching logs. A caller's own id is reused only if it is short and harmless (`[A-Za-z0-9._-]{1,64}`), which blocks log injection.
+
 **Injectable `Clock`.** Time rules ("cancellation closes 120 minutes before start", "no booking after the show has started") read `Instant.now(clock)`. Unit tests use a fixed clock to cover the exact boundaries: 1 second before the cutoff, exactly at it, and 1 second after it.
 
 **The `Asia/Calcutta` timezone bug.** On an Indian Windows machine the JVM's default zone is the legacy ID `Asia/Calcutta`. The PostgreSQL driver sends that zone to the server, and the PostgreSQL 18 test container rejected it with `invalid value for parameter "TimeZone"`. The app pins the JVM to UTC in `main()`, and Maven Surefire passes `-Duser.timezone=UTC` because tests don't run `main()`.
@@ -84,8 +90,10 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | Public | Create an account (always role `USER`) |
-| POST | `/api/auth/login` | Public | Get a JWT access token |
+| POST | `/api/auth/register` | Public | Create an account (always role `USER`; 5 per hour per IP) |
+| POST | `/api/auth/login` | Public | Get a 15-minute access token and a 7-day refresh token (5 attempts per minute per IP) |
+| POST | `/api/auth/refresh` | Public | Swap a refresh token for a new pair; the old refresh token stops working |
+| POST | `/api/auth/logout` | Public | Revoke the session that a refresh token belongs to |
 | GET | `/api/users/me` | User | Current user's profile |
 | GET | `/api/venues`, `/api/venues/{id}` | Public | Browse venues |
 | POST / PUT / DELETE | `/api/venues/**` | Admin | Manage venues |
@@ -159,7 +167,11 @@ Open **http://localhost:8080/swagger-ui.html**. To stop only the app container a
 | `seat.holds` | `result` = `success` / `conflict` | Hold attempts, including lost hold races |
 | `booking.conflicts` | `reason` = `hold_missing` / `already_booked` / `lock_lost` | Why confirms were rejected; `lock_lost` is an optimistic-lock race lost at commit |
 
+| `rate_limit.rejected` | `endpoint` = `login` / `register` | Requests turned away with `429` |
+
 Tags never contain user or seat ids, which keeps the number of distinct metrics small.
+
+**Logs:** every request is logged once (`GET /api/shows/2 -> 200 in 15 ms`) with its request id; health probes are skipped. Locally the id appears in brackets; in production (`prod` profile) each line is a JSON object in Elastic Common Schema, with `requestId` as a field.
 
 ## Deployment
 
@@ -183,6 +195,8 @@ flowchart LR
 
 **Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. No secrets are in the repo, and production uses its own JWT secret.
 
+**Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download.
+
 **Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
 
 **Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats, and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
@@ -200,6 +214,9 @@ flowchart LR
 | Kind | Test | Covers |
 |---|---|---|
 | HTTP (MockMvc + Testcontainers) | `BookingApiTest` | The real HTTP contract with real logins: 401/403/400/409 `problem+json` shapes, field names, and the full hold → confirm → list → cancel flow |
+| HTTP (MockMvc + Testcontainers) | `AuthApiTest` | Refresh token rotation, reuse detection revoking the whole session, logout, and that only hashes are stored |
+| HTTP (MockMvc + Testcontainers) | `RateLimitTest` | 429 + `Retry-After` after the limit, limits per IP, and separate login / register budgets |
+| HTTP (MockMvc) | `RequestIdTest` | Generated and reused request ids, rejection of unsafe ids, and the id in error bodies and log lines |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
@@ -214,8 +231,9 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 3:** Seat maps, Redis holds, confirm/cancel with optimistic locking, concurrency tests
 - [x] **Week 4:** Flyway migrations, price snapshots, cancellation cutoff, GitHub Actions CI
 - [x] **Week 5:** Admin reports with pagination, HTTP-level API tests, Actuator health and metrics, Docker image
-- [x] **Week 6:** Production profile, Neon + Upstash + Render deployment with CI-gated auto-deploy, demo seed script
-- [ ] **Later:** rate limiting on login and registration (now that registration is public)
+- [x] **Week 6:** Production profile, Neon + Upstash + Render deployment, demo seed script
+- [x] **Week 7:** Rate limiting, rotating refresh tokens, CDS for faster cold starts, request ids and JSON logs
+- [ ] **Later:** email verification for new accounts, a scheduled cleanup of expired refresh tokens, and payment integration
 
 ## Author
 

@@ -60,8 +60,8 @@ public class SecurityConfig {
 			response.setHeader("WWW-Authenticate", "Bearer");
 			response.setContentType("application/problem+json");
 			response.getWriter().write("""
-				{"title":"Unauthorized","status":401,"detail":"A valid Bearer token is required","instance":"%s"}
-				""".formatted(request.getRequestURI()));
+				{"title":"Unauthorized","status":401,"detail":"A valid Bearer token is required","instance":"%s","requestId":"%s"}
+				""".formatted(request.getRequestURI(), RequestIdFilter.current()));
 		};
 	}
 
@@ -72,8 +72,8 @@ public class SecurityConfig {
 			response.setStatus(403);
 			response.setContentType("application/problem+json");
 			response.getWriter().write("""
-				{"title":"Forbidden","status":403,"detail":"You do not have permission to do this","instance":"%s"}
-				""".formatted(request.getRequestURI()));
+				{"title":"Forbidden","status":403,"detail":"You do not have permission to do this","instance":"%s","requestId":"%s"}
+				""".formatted(request.getRequestURI(), RequestIdFilter.current()));
 		};
 	}
 

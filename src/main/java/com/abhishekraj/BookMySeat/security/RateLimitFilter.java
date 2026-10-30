@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.security;
 
+import com.abhishekraj.BookMySeat.config.RequestIdFilter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -70,7 +71,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 		response.setContentType("application/problem+json");
 		response.setCharacterEncoding("UTF-8");
 		response.getWriter().write("""
-				{"title":"Too Many Requests","status":429,"detail":"Too many %s attempts. Try again in %d seconds.","instance":"%s"}
-				""".formatted(rule.name(), result.retryAfterSeconds(), request.getRequestURI()));
+				{"title":"Too Many Requests","status":429,"detail":"Too many %s attempts. Try again in %d seconds.","instance":"%s","requestId":"%s"}
+				""".formatted(rule.name(), result.retryAfterSeconds(), request.getRequestURI(), RequestIdFilter.current()));
 	}
 }
