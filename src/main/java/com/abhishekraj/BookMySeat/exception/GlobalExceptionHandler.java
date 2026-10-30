@@ -95,6 +95,13 @@ public class GlobalExceptionHandler {
 		return problem;
 	}
 
+	@ExceptionHandler(IdempotencyKeyReusedException.class)
+	public ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+		problem.setTitle("Idempotency-Key reused");
+		return problem;
+	}
+
 	@ExceptionHandler(InvalidRefreshTokenException.class)
 	public ProblemDetail handleInvalidRefreshToken(InvalidRefreshTokenException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());

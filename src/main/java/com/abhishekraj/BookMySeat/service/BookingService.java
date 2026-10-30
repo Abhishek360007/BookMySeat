@@ -153,6 +153,14 @@ public class BookingService {
 		return BookingResponse.from(booking);
 	}
 
+	// Replaying an idempotent confirm returns the booking as it is now
+	@Transactional(readOnly = true)
+	public BookingResponse getBooking(Long userId, Long bookingId) {
+		return bookingRepository.findByIdAndUserId(bookingId, userId)
+				.map(BookingResponse::from)
+				.orElseThrow(() -> new ResourceNotFoundException("Booking not found with id " + bookingId));
+	}
+
 	@Transactional(readOnly = true)
 	public List<BookingResponse> myBookings(Long userId) {
 		return bookingRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
