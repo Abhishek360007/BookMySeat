@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.service;
 
+import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.entity.Show;
@@ -8,11 +9,19 @@ import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
+import com.abhishekraj.BookMySeat.repository.ShowSpecifications;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -22,12 +31,30 @@ public class ShowService {
 	private final ShowRepository showRepository;
 	private final VenueRepository venueRepository;
 	private final SeatRepository seatRepository;
+	private final Clock clock;
 
 	@Transactional
 	public ShowResponse create(ShowRequest request) {
 		Show show = new Show();
 		applyRequest(show, request);
 		return ShowResponse.from(showRepository.save(show));
+	}
+
+	/** Upcoming shows by default; every filter is optional. */
+	@Transactional(readOnly = true)
+	public PageResponse<ShowResponse> search(String city, String text, Instant from, Instant to, Pageable pageable) {
+		Instant start = from != null ? from : Instant.now(clock);
+		if (to != null && !to.isAfter(start)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "'to' must be after 'from'");
+		}
+
+		List<Specification<Show>> filters = new ArrayList<>();
+		filters.add(ShowSpecifications.startsAtOrAfter(start));
+		if (to != null) filters.add(ShowSpecifications.startsBefore(to));
+		if (city != null && !city.isBlank()) filters.add(ShowSpecifications.inCity(city));
+		if (text != null && !text.isBlank()) filters.add(ShowSpecifications.titleContains(text));
+
+		return PageResponse.of(showRepository.findAll(Specification.allOf(filters), pageable), ShowResponse::from);
 	}
 
 	@Transactional(readOnly = true)
