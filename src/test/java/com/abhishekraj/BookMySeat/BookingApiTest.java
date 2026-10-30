@@ -38,7 +38,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // jsonPath assertions pin the field names: renaming a DTO field is a breaking API change.
 @SpringBootTest(properties = {
 		"app.admin.email=api-test-admin@example.com",
-		"app.admin.password=Api-Test-Admin-Pw-1"
+		"app.admin.password=Api-Test-Admin-Pw-1",
+		// These tests log in many times from one address; RateLimitTest covers the limits
+		"rate-limit.login.max-requests=1000",
+		"rate-limit.register.max-requests=1000"
 })
 @AutoConfigureMockMvc
 @Import(TestcontainersConfig.class)
