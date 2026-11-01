@@ -93,6 +93,7 @@ public class Payment {
 	public void confirm(String paymentId, Booking booking, Instant now) {
 		this.paymentId = paymentId;
 		this.booking = booking;
+		this.failureReason = null; // an earlier failed attempt on this order no longer matters
 		this.status = PaymentStatus.CONFIRMED;
 		this.updatedAt = now;
 	}

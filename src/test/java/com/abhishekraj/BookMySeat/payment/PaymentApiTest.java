@@ -334,6 +334,8 @@ class PaymentApiTest {
 
 		// The customer tries again on the same order and succeeds
 		verify(user, orderId, "pay_retry", sign(orderId, "pay_retry")).andExpect(jsonPath("$.status").value("CONFIRMED"));
+		assertThat(paymentRepository.findAll()).singleElement()
+				.satisfies(p -> assertThat(p.getFailureReason()).isNull());
 	}
 
 	@Test
