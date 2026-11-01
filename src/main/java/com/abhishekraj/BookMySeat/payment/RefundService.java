@@ -6,6 +6,7 @@ import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -50,8 +51,12 @@ public class RefundService {
 		});
 	}
 
-	/** Refunds a REFUND_PENDING payment; safe to call repeatedly (used by the retry job too). */
-	@Transactional
+	/**
+	 * Refunds a REFUND_PENDING payment; safe to call repeatedly (used by the retry job too).
+	 * REQUIRES_NEW: when called from afterCommit, a plain @Transactional would join the transaction that just
+	 * committed and its changes would never be saved.
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public void refund(String orderId) {
 		Payment payment = paymentRepository.findForUpdateByOrderId(orderId).orElseThrow();
 		if (payment.getStatus() != PaymentStatus.REFUND_PENDING) {
@@ -62,7 +67,7 @@ public class RefundService {
 		log.info("Order {} refunded: {}", orderId, refundId);
 	}
 
-	void refundQuietly(String orderId) {
+	public void refundQuietly(String orderId) {
 		try {
 			self.refund(orderId);
 		} catch (RuntimeException ex) {

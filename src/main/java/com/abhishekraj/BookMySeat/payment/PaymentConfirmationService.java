@@ -5,11 +5,16 @@ import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
+import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
 import com.abhishekraj.BookMySeat.service.BookingService;
+import com.abhishekraj.BookMySeat.service.SeatHoldService;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -26,14 +31,16 @@ public class PaymentConfirmationService {
 	private final PaymentRepository paymentRepository;
 	private final BookingService bookingService;
 	private final RefundService refundService;
+	private final SeatHoldService seatHoldService;
 	private final MeterRegistry meterRegistry;
 	private final Clock clock;
 
 	public PaymentConfirmationService(PaymentRepository paymentRepository, BookingService bookingService,
-			RefundService refundService, MeterRegistry meterRegistry, Clock clock) {
+			RefundService refundService, SeatHoldService seatHoldService, MeterRegistry meterRegistry, Clock clock) {
 		this.paymentRepository = paymentRepository;
 		this.bookingService = bookingService;
 		this.refundService = refundService;
+		this.seatHoldService = seatHoldService;
 		this.meterRegistry = meterRegistry;
 		this.clock = clock;
 	}
@@ -68,6 +75,44 @@ public class PaymentConfirmationService {
 			refundService.refundAfterCommit(orderId);
 		}
 		return payment;
+	}
+
+	private static void afterCommit(Runnable action) {
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				action.run();
+			}
+		});
+	}
+
+	/** The checkout window passed without a payment: release the seats. A payment can still arrive late. */
+	@Transactional
+	public void expireIfUnpaid(String orderId) {
+		Instant now = Instant.now(clock);
+		paymentRepository.findForUpdateByOrderId(orderId)
+				.filter(payment -> payment.getStatus() == PaymentStatus.PENDING && payment.isExpired(now))
+				.ifPresent(payment -> {
+					payment.expire(now);
+					meterRegistry.counter("payments", "outcome", "expired").increment();
+					Long userId = payment.getUser().getId();
+					Long showId = payment.getShow().getId();
+					afterCommit(() -> seatHoldService.releaseAll(showId, payment.getSeatIds(), userId));
+					log.info("Order {} expired unpaid; seats released", orderId);
+				});
+	}
+
+	/** Cancelling a paid booking refunds it, in the same transaction as the cancellation. */
+	@EventListener
+	public void onBookingCancelled(BookingCancelledEvent event) {
+		paymentRepository.findByBookingId(event.bookingId())
+				.flatMap(payment -> paymentRepository.findForUpdateByOrderId(payment.getOrderId()))
+				.filter(payment -> payment.getStatus() == PaymentStatus.CONFIRMED)
+				.ifPresent(payment -> {
+					payment.requireRefund(payment.getPaymentId(), "Booking cancelled", Instant.now(clock));
+					meterRegistry.counter("payments", "outcome", "refund").increment();
+					refundService.refundAfterCommit(payment.getOrderId());
+				});
 	}
 
 	/** A failed attempt: noted for support, but the order stays open because the customer may retry. */

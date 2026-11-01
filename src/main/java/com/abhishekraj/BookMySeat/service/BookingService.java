@@ -18,6 +18,7 @@ import com.abhishekraj.BookMySeat.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +47,7 @@ public class BookingService {
 	private final SeatHoldService seatHoldService;
 	private final Clock clock;
 	private final long cancelCutoffMinutes;
+	private final ApplicationEventPublisher events;
 
 	// Business metrics at /actuator/metrics. Tags stay low-cardinality: never user or seat ids.
 	private final Counter bookingsConfirmed;
@@ -58,7 +60,7 @@ public class BookingService {
 	public BookingService(BookingRepository bookingRepository, SeatRepository seatRepository,
 			ShowRepository showRepository, UserRepository userRepository, SeatHoldService seatHoldService,
 			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes,
-			MeterRegistry meterRegistry) {
+			MeterRegistry meterRegistry, ApplicationEventPublisher events) {
 		this.bookingRepository = bookingRepository;
 		this.seatRepository = seatRepository;
 		this.showRepository = showRepository;
@@ -66,6 +68,7 @@ public class BookingService {
 		this.seatHoldService = seatHoldService;
 		this.clock = clock;
 		this.cancelCutoffMinutes = cancelCutoffMinutes;
+		this.events = events;
 		this.bookingsConfirmed = meterRegistry.counter("bookings.confirmed");
 		this.bookingsCancelled = meterRegistry.counter("bookings.cancelled");
 		this.conflictHoldMissing = meterRegistry.counter("booking.conflicts", "reason", "hold_missing");
@@ -183,6 +186,7 @@ public class BookingService {
 					+ " minutes before the show starts");
 		}
 		booking.cancel();
+		events.publishEvent(new BookingCancelledEvent(booking.getId())); // e.g. refund a paid booking
 		bookingsCancelled.increment();
 		return BookingResponse.from(booking);
 	}

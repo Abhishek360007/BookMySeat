@@ -22,6 +22,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -83,6 +84,8 @@ class PaymentApiTest {
 	@Autowired VenueRepository venueRepository;
 	@Autowired UserRepository userRepository;
 	@Autowired StringRedisTemplate redis;
+	@Autowired PaymentMaintenanceJob maintenanceJob;
+	@Autowired JdbcTemplate jdbc;
 
 	String admin;
 	String user;
@@ -328,7 +331,109 @@ class PaymentApiTest {
 				.andExpect(status().isOk()).andExpect(jsonPath("$.result").value("IGNORED"));
 	}
 
+	// ---- 10.4 expiry, late payments and refunds ----
+
+	@Test
+	void unpaidCheckout_expires_andItsSeatsAreReleased() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+
+		expire(orderId);
+
+		mvc.perform(get("/api/payments/" + orderId).header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$.status").value("EXPIRED"));
+		hold(registerAndLogin("pay-user2@example.com"), seats.get(0)); // free for someone else now
+	}
+
+	@Test
+	void latePayment_afterSomeoneElseBookedTheSeats_isRefunded_notDoubleBooked() throws Exception {
+		hold(user, seats.get(0));
+		String lateOrder = orderOf(checkout(user, seats.get(0)));
+		expire(lateOrder);
+
+		String other = registerAndLogin("pay-user2@example.com");
+		hold(other, seats.get(0));
+		String otherOrder = orderOf(checkout(other, seats.get(0)));
+		verify(other, otherOrder, "pay_other", sign(otherOrder, "pay_other")).andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+		// The first customer's payment finally lands
+		webhook("evt_late", "payment.captured", lateOrder, "pay_late").andExpect(jsonPath("$.result").value("PROCESSED"));
+
+		mvc.perform(get("/api/payments/" + lateOrder).header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$.status").value("REFUNDED"))
+				.andExpect(jsonPath("$.bookingId").doesNotExist())
+				.andExpect(jsonPath("$.refundId", startsWith("rfnd_test_")));
+		assertThat(gateway.refunds).singleElement().satisfies(r -> {
+			assertThat(r.paymentId()).isEqualTo("pay_late");
+			assertThat(r.amountMinor()).isEqualTo(25000);
+		});
+		assertThat(bookingRepository.count()).isEqualTo(1); // only the other customer's
+	}
+
+	@Test
+	void latePayment_whileTheSeatsAreStillFree_isBooked() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+		expire(orderId);
+
+		verify(user, orderId, "pay_slow", sign(orderId, "pay_slow")).andExpect(jsonPath("$.status").value("CONFIRMED"));
+		assertThat(gateway.refunds).isEmpty();
+	}
+
+	@Test
+	void failedRefund_isRetriedByTheJob() throws Exception {
+		hold(user, seats.get(0));
+		String lateOrder = orderOf(checkout(user, seats.get(0)));
+		expire(lateOrder);
+		String other = registerAndLogin("pay-user2@example.com");
+		hold(other, seats.get(0));
+		String otherOrder = orderOf(checkout(other, seats.get(0)));
+		verify(other, otherOrder, "pay_other2", sign(otherOrder, "pay_other2"));
+
+		gateway.failRefunds = true;
+		webhook("evt_late2", "payment.captured", lateOrder, "pay_late2").andExpect(status().isOk());
+		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUND_PENDING);
+
+		gateway.failRefunds = false;
+		runMaintenanceJob();
+		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUNDED);
+		assertThat(gateway.refunds).singleElement().satisfies(r -> assertThat(r.paymentId()).isEqualTo("pay_late2"));
+	}
+
+	@Test
+	void cancellingAPaidBooking_refundsIt() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+		int bookingId = JsonPath.read(verify(user, orderId, "pay_cancel", sign(orderId, "pay_cancel"))
+				.andReturn().getResponse().getContentAsString(), "$.bookingId");
+
+		mvc.perform(post("/api/bookings/" + bookingId + "/cancel").header("Authorization", "Bearer " + user))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCELLED"));
+
+		assertThat(statusOf(orderId)).isEqualTo(PaymentStatus.REFUNDED);
+		assertThat(gateway.refunds).singleElement().satisfies(r -> {
+			assertThat(r.paymentId()).isEqualTo("pay_cancel");
+			assertThat(r.amountMinor()).isEqualTo(25000);
+		});
+	}
+
 	// ---- helpers ----
+
+	/** Moves the checkout deadline into the past and runs the job, as if the payment window ran out. */
+	void expire(String orderId) {
+		jdbc.update("update payments set expires_at = now() - interval '1 minute' where order_id = ?", orderId);
+		runMaintenanceJob();
+	}
+
+	void runMaintenanceJob() {
+		// Unlock first (ShedLock keeps the row and only updates it, so expire it rather than delete it)
+		jdbc.update("update shedlock set lock_until = timestamp '2000-01-01 00:00:00' where name = 'paymentMaintenance'");
+		maintenanceJob.run();
+	}
+
+	PaymentStatus statusOf(String orderId) {
+		return paymentRepository.findAll().stream().filter(p -> p.getOrderId().equals(orderId)).findFirst().orElseThrow().getStatus();
+	}
 
 	ResultActions webhook(String eventId, String event, String orderId, String paymentId) throws Exception {
 		byte[] body = webhookBody(event, orderId, paymentId);
