@@ -19,17 +19,21 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -132,6 +136,36 @@ public class BookingService {
 
 		bookingsConfirmed.increment();
 		return BookingResponse.from(booking);
+	}
+
+	/**
+	 * Books seats that were paid for online. Runs inside the payment's transaction. Returns empty instead of
+	 * throwing when the seats can't be booked any more (taken, held by someone else, show started), so the
+	 * caller can record a refund in the same transaction.
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Optional<Booking> tryConfirmPaid(Long userId, Long showId, Collection<Long> seatIds, BigDecimal paidAmount) {
+		Show show = findShow(showId);
+		if (!Instant.now(clock).isBefore(show.getStartTime())) {
+			return Optional.empty();
+		}
+		List<Seat> seats = seatRepository.findAllById(seatIds);
+		if (seats.size() != seatIds.size() || seats.stream().anyMatch(seat -> seat.getStatus() != SeatStatus.AVAILABLE)
+				|| seatHoldService.isHeldByAnotherUser(showId, seatIds, userId)) {
+			return Optional.empty();
+		}
+
+		seats.forEach(seat -> seat.setStatus(SeatStatus.BOOKED)); // @Version still guards against a racing confirm
+		Booking booking = bookingRepository.save(
+				new Booking(userRepository.getReferenceById(userId), show, new HashSet<>(seats), paidAmount));
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				seatHoldService.releaseAll(showId, seatIds, userId);
+			}
+		});
+		bookingsConfirmed.increment();
+		return Optional.of(booking);
 	}
 
 	@Transactional

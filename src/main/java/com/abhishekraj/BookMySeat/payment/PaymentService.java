@@ -2,12 +2,15 @@ package com.abhishekraj.BookMySeat.payment;
 
 import com.abhishekraj.BookMySeat.dto.CheckoutResponse;
 import com.abhishekraj.BookMySeat.dto.ConfirmBookingRequest;
+import com.abhishekraj.BookMySeat.dto.PaymentResponse;
+import com.abhishekraj.BookMySeat.dto.VerifyPaymentRequest;
 import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.SeatStatus;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
+import com.abhishekraj.BookMySeat.exception.InvalidSignatureException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
@@ -16,6 +19,7 @@ import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.service.SeatHoldService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -42,18 +46,20 @@ public class PaymentService {
 	private final UserRepository userRepository;
 	private final SeatHoldService seatHoldService;
 	private final PaymentGateway gateway;
+	private final PaymentConfirmationService confirmation;
 	private final PaymentProperties properties;
 	private final Clock clock;
 
 	public PaymentService(PaymentRepository paymentRepository, ShowRepository showRepository,
 			SeatRepository seatRepository, UserRepository userRepository, SeatHoldService seatHoldService,
-			PaymentGateway gateway, PaymentProperties properties, Clock clock) {
+			PaymentGateway gateway, PaymentConfirmationService confirmation, PaymentProperties properties, Clock clock) {
 		this.paymentRepository = paymentRepository;
 		this.showRepository = showRepository;
 		this.seatRepository = seatRepository;
 		this.userRepository = userRepository;
 		this.seatHoldService = seatHoldService;
 		this.gateway = gateway;
+		this.confirmation = confirmation;
 		this.properties = properties;
 		this.clock = clock;
 	}
@@ -101,6 +107,24 @@ public class PaymentService {
 				order.id(), amount, properties.currency(), now, expiresAt));
 		log.info("Checkout: order {} for {} seat(s), {} {}", order.id(), seatIds.size(), amount, properties.currency());
 		return toResponse(payment);
+	}
+
+	/** Razorpay Checkout's success callback, relayed by the client. Trusted only if the signature checks out. */
+	public PaymentResponse verify(Long userId, VerifyPaymentRequest request) {
+		requireEnabled();
+		paymentRepository.findByOrderIdAndUserId(request.orderId(), userId)
+				.orElseThrow(() -> new ResourceNotFoundException("Payment not found for order " + request.orderId()));
+		if (!PaymentSignatures.isValidPayment(request.orderId(), request.paymentId(), request.signature(),
+				properties.razorpay().keySecret())) {
+			throw new InvalidSignatureException("Payment signature is invalid");
+		}
+		return PaymentResponse.from(confirmation.paymentSucceeded(request.orderId(), request.paymentId(), "callback"));
+	}
+
+	@Transactional(readOnly = true)
+	public PaymentResponse status(Long userId, String orderId) {
+		return paymentRepository.findByOrderIdAndUserId(orderId, userId).map(PaymentResponse::from)
+				.orElseThrow(() -> new ResourceNotFoundException("Payment not found for order " + orderId));
 	}
 
 	private CheckoutResponse toResponse(Payment payment) {

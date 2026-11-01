@@ -102,6 +102,13 @@ public class GlobalExceptionHandler {
 		return problem;
 	}
 
+	@ExceptionHandler(InvalidSignatureException.class)
+	public ProblemDetail handleInvalidSignature(InvalidSignatureException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+		problem.setTitle("Invalid signature");
+		return problem;
+	}
+
 	@ExceptionHandler(InvalidRefreshTokenException.class)
 	public ProblemDetail handleInvalidRefreshToken(InvalidRefreshTokenException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());

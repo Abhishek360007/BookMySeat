@@ -25,14 +25,19 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HexFormat;
 import java.util.List;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -152,7 +157,97 @@ class PaymentApiTest {
 		assertThat(bookingRepository.count()).isZero();
 	}
 
+	// ---- 10.2 verify (client callback) ----
+
+	@Test
+	void validPayment_createsTheBooking_releasesHolds_andIsIdempotent() throws Exception {
+		hold(user, seats.get(0), seats.get(1));
+		String orderId = orderOf(checkout(user, seats.get(0), seats.get(1)));
+
+		String first = verify(user, orderId, "pay_test_1", sign(orderId, "pay_test_1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"))
+				.andExpect(jsonPath("$.paymentId").value("pay_test_1"))
+				.andExpect(jsonPath("$.bookingId").isNumber())
+				.andReturn().getResponse().getContentAsString();
+
+		// Repeating the callback changes nothing
+		verify(user, orderId, "pay_test_1", sign(orderId, "pay_test_1"))
+				.andExpect(jsonPath("$.bookingId").value((Integer) JsonPath.read(first, "$.bookingId")));
+
+		mvc.perform(get("/api/bookings/me").header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$.length()").value(1))
+				.andExpect(jsonPath("$[0].status").value("CONFIRMED"))
+				.andExpect(jsonPath("$[0].totalAmount").value(500.00));
+		assertThat(redis.keys("hold:show:" + showId + ":*")).isEmpty();
+		mvc.perform(get("/api/payments/" + orderId).header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
+	}
+
+	@Test
+	void tamperedSignature_is400_andBooksNothing() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+
+		verify(user, orderId, "pay_test_2", sign(orderId, "pay_test_OTHER"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.title").value("Invalid signature"));
+
+		assertThat(bookingRepository.count()).isZero();
+		assertThat(paymentRepository.findAll()).singleElement()
+				.satisfies(p -> assertThat(p.getStatus()).isEqualTo(PaymentStatus.PENDING));
+	}
+
+	@Test
+	void someoneElsesOrder_is404() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+		String other = registerAndLogin("pay-user2@example.com");
+
+		verify(other, orderId, "pay_test_3", sign(orderId, "pay_test_3")).andExpect(status().isNotFound());
+		mvc.perform(get("/api/payments/" + orderId).header("Authorization", "Bearer " + other))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void bookingRecordsWhatWasPaid_evenIfThePriceChangesMeanwhile() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0))); // 250.00
+
+		Instant start = Instant.now().plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		mvc.perform(put("/api/shows/" + showId)
+				.header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"title\":\"Pay Show\",\"startTime\":\"" + start + "\",\"price\":400.00,\"venueId\":"
+						+ showRepository.findById(showId).orElseThrow().getVenue().getId() + "}"))
+				.andExpect(status().isOk());
+
+		verify(user, orderId, "pay_test_4", sign(orderId, "pay_test_4")).andExpect(jsonPath("$.status").value("CONFIRMED"));
+		mvc.perform(get("/api/bookings/me").header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$[0].totalAmount").value(250.00));
+	}
+
 	// ---- helpers ----
+
+	ResultActions verify(String token, String orderId, String paymentId, String signature) throws Exception {
+		return mvc.perform(post("/api/payments/verify").header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"orderId\":\"" + orderId + "\",\"paymentId\":\"" + paymentId + "\",\"signature\":\"" + signature + "\"}"));
+	}
+
+	static String orderOf(ResultActions checkout) throws Exception {
+		return JsonPath.read(checkout.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.orderId");
+	}
+
+	// Razorpay's documented scheme, computed independently of the app's own code
+	static String sign(String orderId, String paymentId) throws Exception {
+		return hmac(KEY_SECRET, (orderId + "|" + paymentId).getBytes(StandardCharsets.UTF_8));
+	}
+
+	static String hmac(String secret, byte[] data) throws Exception {
+		Mac mac = Mac.getInstance("HmacSHA256");
+		mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+		return HexFormat.of().formatHex(mac.doFinal(data));
+	}
 
 	ResultActions checkout(String token, Integer... seatIds) throws Exception {
 		return mvc.perform(post("/api/bookings/checkout").header("Authorization", "Bearer " + token)
