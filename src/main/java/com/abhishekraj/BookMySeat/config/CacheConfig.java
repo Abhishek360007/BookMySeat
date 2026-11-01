@@ -3,7 +3,10 @@ package com.abhishekraj.BookMySeat.config;
 import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
+import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.interceptor.CacheErrorHandler;
+import org.springframework.cache.interceptor.LoggingCacheErrorHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -22,10 +25,17 @@ import java.time.Duration;
 // HIGHEST_PRECEDENCE: the cache is checked before @Transactional starts, so a hit never touches the database.
 @Configuration
 @EnableCaching(order = Ordered.HIGHEST_PRECEDENCE)
-public class CacheConfig {
+public class CacheConfig implements CachingConfigurer {
 
 	public static final String SHOW = "show";
 	public static final String SHOW_SEARCH = "showSearch";
+
+	// A cache only makes reads faster; if Redis is slow or down, log it and read from the database
+	// instead of failing the request (the default handler would turn it into a 500)
+	@Override
+	public CacheErrorHandler errorHandler() {
+		return new LoggingCacheErrorHandler(false);
+	}
 
 	@Bean
 	public RedisCacheManagerBuilderCustomizer redisCaches(RedisConnectionFactory connectionFactory, JsonMapper jsonMapper) {
