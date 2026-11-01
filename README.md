@@ -21,6 +21,7 @@
 - **Proven with a 50-thread test:** Testcontainers tests fire 50 concurrent requests at one seat against real PostgreSQL and Redis, and CI runs them on every push.
 - **Flyway-managed schema:** versioned SQL migrations, with Hibernate set to `validate`. CHECK constraints protect prices and totals in the database itself.
 - **Hardened auth:** 15-minute JWT access tokens, rotating refresh tokens with stolen-token (reuse) detection, BCrypt passwords, `USER` / `ADMIN` roles, and per-IP rate limits on login and registration. Errors are RFC 9457 `ProblemDetail` responses.
+- **Online payments (Razorpay, test mode):** a booking exists only after a verified payment. Late payments, duplicate webhooks and a callback racing the webhook can never double-book or lose money: the customer is either booked or refunded.
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
 - **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
@@ -97,6 +98,35 @@ docker run --rm -v "${PWD}/load-tests:/scripts" -e BASE_URL=http://host.docker.i
 
 **Caching rules:** single shows are cached for 10 minutes and search results for 60 seconds. Any admin change to a show or venue clears the affected entries before the response returns (writes are synchronous: Lettuce would otherwise clear them in the background and a read straight after an edit could see old data, which a test caught). The cache is checked before a transaction starts, so a hit never borrows a database connection.
 
+## Payments
+
+Optional (`PAYMENTS_ENABLED=true`): **hold → checkout → pay with Razorpay → booking**. When off, bookings are confirmed directly, as before. It is off on the live demo until the web frontend (Razorpay Checkout needs a page to take the card).
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: checkout (holds extended to 15 min)
+    PENDING --> CONFIRMED: paid, seats still free
+    PENDING --> EXPIRED: window passed (job releases seats)
+    EXPIRED --> CONFIRMED: paid late, seats still free
+    PENDING --> REFUND_PENDING: paid, seats gone
+    EXPIRED --> REFUND_PENDING: paid late, seats taken
+    CONFIRMED --> REFUND_PENDING: booking cancelled
+    REFUND_PENDING --> REFUNDED: Razorpay refund (retried by a job)
+```
+
+| Problem | How it's handled |
+|---|---|
+| Hold expiring during checkout | Checkout extends the user's holds to the 15-minute payment window (one atomic Lua script, all seats or none) |
+| Payment arriving after the window | Booked if the seats are still free and nobody else holds them; otherwise refunded. Never double-booked |
+| Webhook delivered more than once | Event ids are stored with `INSERT … ON CONFLICT DO NOTHING` in the same transaction as the processing, so a repeat is a no-op and a failed attempt can be retried |
+| Client callback and webhook racing | Both go through one confirm path that locks the payment row; whichever arrives first wins, the other sees the result. Unique constraints on `order_id`, `payment_id` and `booking_id` back it up. Tested with 10 simultaneous reports: exactly 1 booking |
+| Forged callbacks or webhooks | HMAC-SHA256 signatures (key secret for the callback, webhook secret over the exact raw body), compared in constant time |
+| Price changed during checkout | The booking records the amount actually paid |
+| Refund API failing | The payment stays `REFUND_PENDING`; a ShedLock job retries it. Refunds run after the decision commits, in their own transaction |
+| Cancelling a paid booking | Refund recorded in the same transaction as the cancellation |
+
+All of it is tested against real PostgreSQL and Redis with a fake Razorpay (`PaymentApiTest`, 19 tests).
+
 ## Design decisions
 
 **Redis for holds, PostgreSQL for bookings.** Holds are short-lived, so Redis expires them with no cleanup job, and a Lua script makes "check all seats, then hold all" a single atomic step. Confirmed bookings are permanent records, so they live in PostgreSQL, the source of truth.
@@ -141,7 +171,11 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/shows/{showId}/seats` | Admin | Generate seats, e.g. 5 rows × 10 = A1–E10 |
 | POST | `/api/bookings/hold` | User | Hold seats for 5 minutes |
 | POST | `/api/bookings/hold/release` | User | Release your holds |
-| POST | `/api/bookings` | User | Confirm held seats (total computed on the server); optional `Idempotency-Key` header for safe retries |
+| POST | `/api/bookings` | User | Confirm held seats (total computed on the server); optional `Idempotency-Key` header for safe retries. Only when payments are off |
+| POST | `/api/bookings/checkout` | User | Payments on: create a Razorpay order for held seats; returns key id, order id and amount |
+| POST | `/api/payments/verify` | User | Report a Razorpay payment (order id, payment id, signature); idempotent |
+| GET | `/api/payments/{orderId}` | User | Payment status: `PENDING`, `CONFIRMED`, `EXPIRED`, `REFUND_PENDING`, `REFUNDED` |
+| POST | `/api/payments/webhook` | Razorpay | Server-to-server payment events, authenticated by `X-Razorpay-Signature` |
 | POST | `/api/bookings/{id}/cancel` | User | Cancel, up to 2 hours before the show |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
 | GET | `/api/admin/shows/{showId}/bookings?status=&page=&size=&sort=` | Admin | Paginated bookings for a show (default `CONFIRMED`, newest first, max 100 per page) |
@@ -170,6 +204,8 @@ Then open **http://localhost:8080/swagger-ui.html**.
 |---|---|---|
 | `JWT_SECRET` | HS256 signing key (at least 32 bytes) | Dev-only value. **Always set it in production.** |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Admin account created on startup | Not set (no admin is created) |
+| `PAYMENTS_ENABLED` | Require a Razorpay payment before a booking | `false` |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` | Razorpay test-mode API keys and webhook secret | Not set |
 
 Hold duration and the cancellation cutoff are in [`application.properties`](src/main/resources/application.properties).
 
@@ -261,6 +297,8 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 | HTTP (MockMvc + Testcontainers) | `ShowSearchApiTest` | City / text / date filters combined, LIKE wildcards treated as text, pagination, sorting, invalid input → 400 |
 | Integration (Testcontainers) | `RefreshTokenCleanupJobTest` | Only expired tokens are deleted; a second run inside the lock window is skipped by ShedLock |
 | HTTP (MockMvc) | `ApiDocsTest` | The OpenAPI document: tags, public endpoints without a lock, documented `Idempotency-Key` |
+| HTTP (MockMvc + Testcontainers, fake Razorpay) | `PaymentApiTest` | Checkout, signatures, idempotent confirm, duplicate and forged webhooks, 10-way callback/webhook race, expiry, late payments, refund retry, refund on cancel |
+| HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database and login still works |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
@@ -279,7 +317,9 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 7:** Rate limiting, rotating refresh tokens, CDS for faster cold starts, request ids and JSON logs
 - [x] **Week 8:** Idempotency keys, show search, scheduled cleanup with ShedLock, test coverage in CI, richer Swagger docs
 - [x] **Week 9:** k6 load tests, a 300-user booking rush with zero double bookings, Redis read cache (p95 608 ms → 4 ms with a remote-like database), deploy from CI
-- [ ] **Later:** email verification for new accounts, payment integration, and a faster seat map
+- [x] **Week 10:** Razorpay payments (test mode): checkout, signature verification, exactly-once webhooks, late-payment refunds
+- [ ] **Next:** web frontend with a visual seat map and Razorpay Checkout
+- [ ] **Later:** booking confirmation emails (outbox pattern) and email verification
 
 ## Author
 
