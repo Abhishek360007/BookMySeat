@@ -8,11 +8,16 @@
 
 **Movie ticket booking API that guarantees one booking per seat under concurrent load.**
 
-### 🚀 [Live demo: Swagger UI](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
+### 🚀 [Live demo: book a seat](https://bookmyseat-8j1e.onrender.com/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
 
 > Free tier: the first load after a quiet period can take **about 2 minutes** while the app wakes up (if the first page shows an error, refresh it). After that it responds in about a second.
 
-**Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`. Call `POST /api/auth/login`, copy the `accessToken`, click **Authorize**, then hold and book seats on the "Dune: Part Three" show. Please don't use a real password if you register your own account.
+**Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`, or click **Use the demo account** in the app. Pick seats on "Dune: Part Three", hold them and book. Please don't use a real password if you register your own account.
+
+<p>
+  <img src="docs/screenshots/seat-map-held.png" alt="Seat map with two seats held and a countdown" width="68%">
+  <img src="docs/screenshots/phone.png" alt="The seat map on a phone" width="24%">
+</p>
 
 ## Highlights
 
@@ -100,7 +105,7 @@ docker run --rm -v "${PWD}/load-tests:/scripts" -e BASE_URL=http://host.docker.i
 
 ## Payments
 
-Optional (`PAYMENTS_ENABLED=true`): **hold → checkout → pay with Razorpay → booking**. When off, bookings are confirmed directly, as before. It is off on the live demo until the web frontend (Razorpay Checkout needs a page to take the card).
+Optional (`PAYMENTS_ENABLED=true`): **hold → checkout → pay with Razorpay → booking**. When off, bookings are confirmed directly, as before. The web app opens Razorpay Checkout automatically when payments are on.
 
 ```mermaid
 stateDiagram-v2
@@ -208,6 +213,28 @@ Then open **http://localhost:8080/swagger-ui.html**.
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` | Razorpay test-mode API keys and webhook secret | Not set |
 
 Hold duration and the cancellation cutoff are in [`application.properties`](src/main/resources/application.properties).
+
+## Web app
+
+A small single-page app served by the same Spring Boot server at `/` (same origin, so no CORS; one Docker image, one deploy). Plain HTML, CSS and JavaScript modules with **no build step**, so it adds no Node toolchain to the Dockerfile or CI.
+
+| Feature | Detail |
+|---|---|
+| Show search | City and title filters on `GET /api/shows/search`, paginated |
+| Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading |
+| Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
+| Safe confirm | Every confirm sends an `Idempotency-Key`, so a double click or a retry can't book twice |
+| Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
+| Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
+| Phones and dark mode | Responsive down to 360 px wide; follows the system light/dark setting |
+
+**Browser test:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. It fails on any JavaScript error. It caught two real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), and the seat map was cut off on phones.
+
+```powershell
+# app running on port 8080 with the demo data (scripts/seed-demo.ps1)
+docker run --rm -v "${PWD}/e2e:/e2e" -e BASE_URL=http://host.docker.internal:8080 mcr.microsoft.com/playwright:v1.64.1-noble `
+  sh -c "npm i --no-save --prefix /tmp/pw playwright@1.64.1 && cp /e2e/booking-flow.mjs /tmp/pw/ && cd /tmp/pw && node booking-flow.mjs"
+```
 
 ## Run with Docker
 
@@ -318,7 +345,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 8:** Idempotency keys, show search, scheduled cleanup with ShedLock, test coverage in CI, richer Swagger docs
 - [x] **Week 9:** k6 load tests, a 300-user booking rush with zero double bookings, Redis read cache (p95 608 ms → 4 ms with a remote-like database), deploy from CI
 - [x] **Week 10:** Razorpay payments (test mode): checkout, signature verification, exactly-once webhooks, late-payment refunds
-- [ ] **Next:** web frontend with a visual seat map and Razorpay Checkout
+- [x] **Week 11:** web app (live seat map, holds with countdown, Razorpay Checkout, my bookings) with a browser end-to-end test
 - [ ] **Later:** booking confirmation emails (outbox pattern) and email verification
 
 ## Author
