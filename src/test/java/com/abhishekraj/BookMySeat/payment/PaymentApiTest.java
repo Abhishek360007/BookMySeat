@@ -28,8 +28,14 @@ import org.springframework.test.web.servlet.ResultActions;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -226,7 +232,119 @@ class PaymentApiTest {
 				.andExpect(jsonPath("$[0].totalAmount").value(250.00));
 	}
 
+	// ---- 10.3 webhook ----
+
+	@Test
+	void capturedWebhook_books_evenIfTheClientNeverCallsBack() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+
+		webhook("evt_1", "payment.captured", orderId, "pay_wh_1")
+				.andExpect(status().isOk()).andExpect(jsonPath("$.result").value("PROCESSED"));
+
+		assertThat(paymentRepository.findAll()).singleElement().satisfies(p -> {
+			assertThat(p.getStatus()).isEqualTo(PaymentStatus.CONFIRMED);
+			assertThat(p.getPaymentId()).isEqualTo("pay_wh_1");
+		});
+		assertThat(bookingRepository.count()).isEqualTo(1);
+	}
+
+	@Test
+	void redeliveredAndOverlappingEvents_bookOnce() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+
+		webhook("evt_2", "payment.captured", orderId, "pay_wh_2").andExpect(jsonPath("$.result").value("PROCESSED"));
+		webhook("evt_2", "payment.captured", orderId, "pay_wh_2").andExpect(jsonPath("$.result").value("DUPLICATE"));
+		webhook("evt_3", "order.paid", orderId, "pay_wh_2").andExpect(jsonPath("$.result").value("PROCESSED"));
+
+		assertThat(bookingRepository.count()).isEqualTo(1);
+		assertThat(gateway.refunds).isEmpty();
+	}
+
+	@Test
+	void callbackAndWebhooksRacing_produceExactlyOneBooking() throws Exception {
+		hold(user, seats.get(0), seats.get(1));
+		String orderId = orderOf(checkout(user, seats.get(0), seats.get(1)));
+		String signature = sign(orderId, "pay_race");
+
+		int reports = 10;
+		ExecutorService pool = Executors.newFixedThreadPool(reports);
+		CountDownLatch go = new CountDownLatch(1);
+		List<Future<Integer>> results = new ArrayList<>();
+		for (int i = 0; i < reports; i++) {
+			int n = i;
+			results.add(pool.submit(() -> {
+				go.await();
+				ResultActions r = n % 2 == 0
+						? webhook("evt_race_" + n, "payment.captured", orderId, "pay_race")
+						: verify(user, orderId, "pay_race", signature);
+				return r.andReturn().getResponse().getStatus();
+			}));
+		}
+		go.countDown();
+		for (Future<Integer> result : results) {
+			assertThat(result.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+		}
+		pool.shutdown();
+
+		assertThat(bookingRepository.count()).isEqualTo(1);
+		assertThat(gateway.refunds).isEmpty();
+		assertThat(paymentRepository.findAll()).singleElement()
+				.satisfies(p -> assertThat(p.getStatus()).isEqualTo(PaymentStatus.CONFIRMED));
+	}
+
+	@Test
+	void forgedWebhook_is400() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+		byte[] body = webhookBody("payment.captured", orderId, "pay_forged");
+
+		mvc.perform(post("/api/payments/webhook").contentType(MediaType.APPLICATION_JSON).content(body)
+						.header("X-Razorpay-Event-Id", "evt_forged")
+						.header("X-Razorpay-Signature", hmac("not-the-webhook-secret", body)))
+				.andExpect(status().isBadRequest());
+		assertThat(bookingRepository.count()).isZero();
+	}
+
+	@Test
+	void failedAttempt_keepsTheOrderOpenForARetry() throws Exception {
+		hold(user, seats.get(0));
+		String orderId = orderOf(checkout(user, seats.get(0)));
+
+		webhook("evt_fail", "payment.failed", orderId, "pay_failed").andExpect(jsonPath("$.result").value("PROCESSED"));
+		assertThat(paymentRepository.findAll()).singleElement().satisfies(p -> {
+			assertThat(p.getStatus()).isEqualTo(PaymentStatus.PENDING);
+			assertThat(p.getFailureReason()).isEqualTo("Card declined");
+		});
+
+		// The customer tries again on the same order and succeeds
+		verify(user, orderId, "pay_retry", sign(orderId, "pay_retry")).andExpect(jsonPath("$.status").value("CONFIRMED"));
+	}
+
+	@Test
+	void webhookForAnUnknownOrder_isAcknowledgedAndIgnored() throws Exception {
+		webhook("evt_unknown", "payment.captured", "order_not_ours", "pay_x")
+				.andExpect(status().isOk()).andExpect(jsonPath("$.result").value("IGNORED"));
+	}
+
 	// ---- helpers ----
+
+	ResultActions webhook(String eventId, String event, String orderId, String paymentId) throws Exception {
+		byte[] body = webhookBody(event, orderId, paymentId);
+		return mvc.perform(post("/api/payments/webhook").contentType(MediaType.APPLICATION_JSON).content(body)
+				.header("X-Razorpay-Event-Id", eventId)
+				.header("X-Razorpay-Signature", hmac(WEBHOOK_SECRET, body)));
+	}
+
+	// Shape of a Razorpay payment event (trimmed to the fields the app reads)
+	static byte[] webhookBody(String event, String orderId, String paymentId) {
+		return ("{\"entity\":\"event\",\"event\":\"" + event + "\",\"payload\":{\"payment\":{\"entity\":{"
+				+ "\"id\":\"" + paymentId + "\",\"order_id\":\"" + orderId + "\",\"amount\":25000,\"currency\":\"INR\","
+				+ "\"error_description\":\"Card declined\"}}}}").getBytes(StandardCharsets.UTF_8);
+	}
+
+	// ---- helpers (shared) ----
 
 	ResultActions verify(String token, String orderId, String paymentId, String signature) throws Exception {
 		return mvc.perform(post("/api/payments/verify").header("Authorization", "Bearer " + token)

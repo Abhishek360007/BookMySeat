@@ -69,4 +69,13 @@ public class PaymentConfirmationService {
 		}
 		return payment;
 	}
+
+	/** A failed attempt: noted for support, but the order stays open because the customer may retry. */
+	@Transactional
+	public void paymentFailed(String orderId, String reason) {
+		paymentRepository.findForUpdateByOrderId(orderId)
+				.filter(payment -> payment.getStatus() == PaymentStatus.PENDING)
+				.ifPresent(payment -> payment.recordFailure(reason, Instant.now(clock)));
+		meterRegistry.counter("payments", "outcome", "attempt_failed").increment();
+	}
 }

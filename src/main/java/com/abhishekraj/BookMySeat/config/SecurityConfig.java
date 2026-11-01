@@ -23,6 +23,7 @@ public class SecurityConfig {
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers("/api/auth/**").permitAll()
+				.requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll() // verified by its HMAC signature
 				.requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 				.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/error").permitAll()
 				.requestMatchers("/actuator/**").hasRole("ADMIN")
