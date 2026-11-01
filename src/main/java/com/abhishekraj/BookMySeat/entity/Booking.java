@@ -51,6 +51,12 @@ public class Booking {
 	@Version
 	private Long version;
 
+	/** Paid online: the total is what the customer actually paid, even if the price changed meanwhile. */
+	public Booking(User user, Show show, Set<Seat> seats, BigDecimal paidAmount) {
+		this(user, show, seats);
+		this.totalAmount = paidAmount;
+	}
+
 	public Booking(User user, Show show, Set<Seat> seats) {
 		this.user = user;
 		this.show = show;

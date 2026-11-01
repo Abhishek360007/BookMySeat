@@ -1,9 +1,13 @@
 package com.abhishekraj.BookMySeat.controller;
 
 import com.abhishekraj.BookMySeat.dto.BookingResponse;
+import com.abhishekraj.BookMySeat.dto.CheckoutResponse;
 import com.abhishekraj.BookMySeat.dto.ConfirmBookingRequest;
 import com.abhishekraj.BookMySeat.dto.HoldRequest;
 import com.abhishekraj.BookMySeat.dto.HoldResponse;
+import com.abhishekraj.BookMySeat.exception.ConflictException;
+import com.abhishekraj.BookMySeat.payment.PaymentProperties;
+import com.abhishekraj.BookMySeat.payment.PaymentService;
 import com.abhishekraj.BookMySeat.service.BookingService;
 import com.abhishekraj.BookMySeat.service.IdempotencyService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +31,8 @@ public class BookingController {
 
 	private final BookingService bookingService;
 	private final IdempotencyService idempotencyService;
+	private final PaymentService paymentService;
+	private final PaymentProperties paymentProperties;
 
 	@PostMapping("/hold")
 	@ResponseStatus(HttpStatus.CREATED)
@@ -47,6 +53,9 @@ public class BookingController {
 	public ResponseEntity<BookingResponse> confirm(@AuthenticationPrincipal Jwt jwt,
 			@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
 			@Valid @RequestBody ConfirmBookingRequest request) {
+		if (paymentProperties.enabled()) {
+			throw new ConflictException("Payment required: start with POST /api/bookings/checkout");
+		}
 		Long userId = userId(jwt);
 		if (idempotencyKey == null) {
 			return ResponseEntity.status(HttpStatus.CREATED).body(bookingService.confirm(userId, request));
@@ -68,6 +77,16 @@ public class BookingController {
 		}
 		idempotencyService.complete(userId, idempotencyKey, fingerprint, booking.id());
 		return ResponseEntity.status(HttpStatus.CREATED).body(booking);
+	}
+
+	@Operation(summary = "Start paying for held seats",
+			description = "Creates a Razorpay order for the server-computed total and keeps the seats held for the "
+					+ "payment window. Open Razorpay Checkout with the returned key and order id; the booking is "
+					+ "created when the payment succeeds (POST /api/payments/verify or the Razorpay webhook).")
+	@PostMapping("/checkout")
+	@ResponseStatus(HttpStatus.CREATED)
+	public CheckoutResponse checkout(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ConfirmBookingRequest request) {
+		return paymentService.checkout(userId(jwt), request);
 	}
 
 	@PostMapping("/{id}/cancel")

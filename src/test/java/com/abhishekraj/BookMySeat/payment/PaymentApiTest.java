@@ -1,0 +1,195 @@
+package com.abhishekraj.BookMySeat.payment;
+
+import com.abhishekraj.BookMySeat.TestcontainersConfig;
+import com.abhishekraj.BookMySeat.entity.PaymentStatus;
+import com.abhishekraj.BookMySeat.entity.Role;
+import com.abhishekraj.BookMySeat.repository.BookingRepository;
+import com.abhishekraj.BookMySeat.repository.PaymentRepository;
+import com.abhishekraj.BookMySeat.repository.SeatRepository;
+import com.abhishekraj.BookMySeat.repository.ShowRepository;
+import com.abhishekraj.BookMySeat.repository.UserRepository;
+import com.abhishekraj.BookMySeat.repository.VenueRepository;
+import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.startsWith;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+// The payment flow over HTTP with payments enabled and a fake Razorpay
+@SpringBootTest(properties = {
+		"app.admin.email=pay-test-admin@example.com",
+		"app.admin.password=Pay-Test-Admin-Pw-1",
+		"rate-limit.login.max-requests=1000",
+		"rate-limit.register.max-requests=1000",
+		"payments.enabled=true",
+		"payments.razorpay.key-id=rzp_test_fake",
+		"payments.razorpay.key-secret=" + PaymentApiTest.KEY_SECRET,
+		"payments.razorpay.webhook-secret=" + PaymentApiTest.WEBHOOK_SECRET
+})
+@AutoConfigureMockMvc
+@Import({TestcontainersConfig.class, PaymentApiTest.FakeRazorpay.class})
+class PaymentApiTest {
+
+	static final String KEY_SECRET = "test_key_secret";
+	static final String WEBHOOK_SECRET = "test_webhook_secret";
+
+	@TestConfiguration(proxyBeanMethods = false)
+	static class FakeRazorpay {
+		@Bean
+		@Primary
+		FakePaymentGateway fakePaymentGateway() {
+			return new FakePaymentGateway();
+		}
+	}
+
+	@Autowired MockMvc mvc;
+	@Autowired FakePaymentGateway gateway;
+	@Autowired PaymentRepository paymentRepository;
+	@Autowired BookingRepository bookingRepository;
+	@Autowired SeatRepository seatRepository;
+	@Autowired ShowRepository showRepository;
+	@Autowired VenueRepository venueRepository;
+	@Autowired UserRepository userRepository;
+	@Autowired StringRedisTemplate redis;
+
+	String admin;
+	String user;
+	long showId;
+	List<Integer> seats;
+
+	@BeforeEach
+	void setUp() throws Exception {
+		gateway.reset();
+		admin = login("pay-test-admin@example.com", "Pay-Test-Admin-Pw-1");
+		showId = createShowWithSeats();
+		seats = JsonPath.read(mvc.perform(get("/api/shows/" + showId + "/seats"))
+				.andReturn().getResponse().getContentAsString(), "$[*].id");
+		user = registerAndLogin("pay-user1@example.com");
+	}
+
+	@AfterEach
+	void cleanUp() {
+		paymentRepository.deleteAll();
+		bookingRepository.deleteAll();
+		seatRepository.deleteAll();
+		showRepository.deleteAll();
+		venueRepository.deleteAll();
+		userRepository.deleteAll(userRepository.findAll().stream().filter(u -> u.getRole() != Role.ADMIN).toList());
+		redis.delete(redis.keys("hold:*"));
+	}
+
+	// ---- 10.1 checkout ----
+
+	@Test
+	void checkout_createsOrderForServerComputedAmount_andExtendsTheHolds() throws Exception {
+		hold(user, seats.get(0), seats.get(1));
+
+		checkout(user, seats.get(0), seats.get(1))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.orderId", startsWith("order_test_")))
+				.andExpect(jsonPath("$.razorpayKeyId").value("rzp_test_fake"))
+				.andExpect(jsonPath("$.amount").value(50000)) // paise
+				.andExpect(jsonPath("$.currency").value("INR"))
+				.andExpect(jsonPath("$.totalAmount").value(500.00));
+
+		assertThat(gateway.orders).singleElement().satisfies(o -> assertThat(o.amountMinor()).isEqualTo(50000));
+		assertThat(paymentRepository.findAll()).singleElement()
+				.satisfies(p -> assertThat(p.getStatus()).isEqualTo(PaymentStatus.PENDING));
+		// Held for the 15-minute payment window (+1 min grace), not the normal 5 minutes
+		assertThat(redis.getExpire("hold:show:" + showId + ":seat:" + seats.get(0))).isGreaterThan(900);
+	}
+
+	@Test
+	void checkoutRetry_returnsTheSameOpenOrder() throws Exception {
+		hold(user, seats.get(0));
+		String first = JsonPath.read(checkout(user, seats.get(0)).andReturn().getResponse().getContentAsString(), "$.orderId");
+
+		checkout(user, seats.get(0)).andExpect(status().isCreated()).andExpect(jsonPath("$.orderId").value(first));
+
+		assertThat(gateway.orders).hasSize(1);
+	}
+
+	@Test
+	void checkoutWithoutHolding_is409() throws Exception {
+		checkout(user, seats.get(0)).andExpect(status().isConflict());
+
+		String other = registerAndLogin("pay-user2@example.com");
+		hold(other, seats.get(1));
+		checkout(user, seats.get(1)).andExpect(status().isConflict()); // held by someone else
+		assertThat(gateway.orders).isEmpty();
+	}
+
+	@Test
+	void directConfirmWithoutPaying_isRefused() throws Exception {
+		hold(user, seats.get(0));
+
+		mvc.perform(post("/api/bookings").header("Authorization", "Bearer " + user)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"showId\":" + showId + ",\"seatIds\":[" + seats.get(0) + "]}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.detail", startsWith("Payment required")));
+		assertThat(bookingRepository.count()).isZero();
+	}
+
+	// ---- helpers ----
+
+	ResultActions checkout(String token, Integer... seatIds) throws Exception {
+		return mvc.perform(post("/api/bookings/checkout").header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"showId\":" + showId + ",\"seatIds\":" + List.of(seatIds) + "}"));
+	}
+
+	void hold(String token, Integer... seatIds) throws Exception {
+		mvc.perform(post("/api/bookings/hold").header("Authorization", "Bearer " + token)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"showId\":" + showId + ",\"seatIds\":" + List.of(seatIds) + "}"))
+				.andExpect(status().isCreated());
+	}
+
+	String registerAndLogin(String email) throws Exception {
+		mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
+				.content("{\"name\":\"Pay Test\",\"email\":\"" + email + "\",\"password\":\"Pay-User-Pw-123\"}"));
+		return login(email, "Pay-User-Pw-123");
+	}
+
+	String login(String email, String password) throws Exception {
+		return JsonPath.read(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}"))
+				.andExpect(status().isOk()).andReturn().getResponse().getContentAsString(), "$.accessToken");
+	}
+
+	long createShowWithSeats() throws Exception {
+		int venueId = JsonPath.read(mvc.perform(post("/api/venues").header("Authorization", "Bearer " + admin)
+						.contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Pay Venue\",\"city\":\"Paytown\"}"))
+				.andReturn().getResponse().getContentAsString(), "$.id");
+		Instant start = Instant.now().plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		int id = JsonPath.read(mvc.perform(post("/api/shows").header("Authorization", "Bearer " + admin)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"title\":\"Pay Show\",\"startTime\":\"" + start + "\",\"price\":250.00,\"venueId\":" + venueId + "}"))
+				.andReturn().getResponse().getContentAsString(), "$.id");
+		mvc.perform(post("/api/shows/" + id + "/seats").header("Authorization", "Bearer " + admin)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"rows\":1,\"seatsPerRow\":5}"));
+		return id;
+	}
+}

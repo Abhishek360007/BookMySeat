@@ -35,6 +35,17 @@ public class SeatHoldService {
 			end
 			""", Long.class);
 
+	// All-or-nothing: only if EVERY seat is still held by this user, give all of them a new TTL
+	private static final RedisScript<Long> EXTEND_SCRIPT = new DefaultRedisScript<>("""
+			for i, key in ipairs(KEYS) do
+				if redis.call('GET', key) ~= ARGV[1] then return 0 end
+			end
+			for i, key in ipairs(KEYS) do
+				redis.call('EXPIRE', key, ARGV[2])
+			end
+			return 1
+			""", Long.class);
+
 	private final StringRedisTemplate redis;
 	private final Duration holdDuration;
 
@@ -69,6 +80,21 @@ public class SeatHoldService {
 		List<String> owners = redis.opsForValue().multiGet(keys);
 		String me = String.valueOf(userId);
 		return owners != null && owners.stream().allMatch(me::equals);
+	}
+
+	/** Extends this user's holds (e.g. for the payment window); false if any seat is no longer theirs. */
+	public boolean extendAll(Long showId, Collection<Long> seatIds, Long userId, Duration ttl) {
+		List<String> keys = seatIds.stream().map(id -> key(showId, id)).toList();
+		Long ok = redis.execute(EXTEND_SCRIPT, keys, String.valueOf(userId), String.valueOf(ttl.toSeconds()));
+		return ok != null && ok == 1;
+	}
+
+	/** True if any of these seats is held by a different user right now. */
+	public boolean isHeldByAnotherUser(Long showId, Collection<Long> seatIds, Long userId) {
+		List<String> keys = seatIds.stream().map(id -> key(showId, id)).toList();
+		List<String> owners = redis.opsForValue().multiGet(keys);
+		String me = String.valueOf(userId);
+		return owners != null && owners.stream().anyMatch(owner -> owner != null && !owner.equals(me));
 	}
 
 	/** Returns which of these seats are currently held by anyone, in ONE Redis call. */
