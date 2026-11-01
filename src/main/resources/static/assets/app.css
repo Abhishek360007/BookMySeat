@@ -107,7 +107,7 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible { outline: 2px soli
 	margin: 1.5rem auto .75rem; max-width: 420px; text-align: center; font-size: .75rem; letter-spacing: .2em;
 	color: var(--muted); border-top: 4px solid var(--border); border-radius: 50% 50% 0 0 / 14px 14px 0 0; padding-top: 6px;
 }
-.seatmap { display: grid; gap: 6px; justify-content: center; margin-bottom: 1rem; overflow-x: auto; padding-bottom: 4px; }
+.seatmap { display: grid; gap: 6px; justify-content: safe center; /* 'safe': if it ever overflows, row A stays reachable */ margin-bottom: 1rem; overflow-x: auto; padding-bottom: 4px; }
 .seat-row { display: flex; gap: 6px; align-items: center; }
 .row-label { width: 1.5rem; color: var(--muted); font-size: .8rem; text-align: center; }
 .seat {
@@ -152,6 +152,10 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 
 @media (max-width: 560px) {
 	.search { grid-template-columns: 1fr; }
-	.seat { width: 1.9rem; height: 1.9rem; font-size: .62rem; }
+	.card { padding: 12px; }
+	/* 10 seats + the row label must fit a 360px-wide phone */
+	.seatmap, .seat-row { gap: 4px; }
+	.row-label { width: 1rem; }
+	.seat { width: 1.6rem; height: 1.6rem; font-size: .6rem; border-radius: 6px 6px 3px 3px; }
 	.who { display: none; }
 }

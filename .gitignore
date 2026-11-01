@@ -35,3 +35,6 @@ build/
 ### Local secrets ###
 .env
 .env.prod
+
+### Browser test screenshots ###
+e2e-out/

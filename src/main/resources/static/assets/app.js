@@ -16,6 +16,16 @@ const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR
 const when = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// crypto.randomUUID() only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere
+function uuid() {
+	if (crypto.randomUUID) return crypto.randomUUID();
+	const b = crypto.getRandomValues(new Uint8Array(16));
+	b[6] = (b[6] & 0x0f) | 0x40; // version 4
+	b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+	const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 // ---------- API ----------
 
 class ApiError extends Error {
@@ -321,7 +331,7 @@ async function renderShow(showId) {
 		await run(async () => {
 			const seatIds = [...selected];
 			const response = await api('/api/bookings/hold', { method: 'POST', auth: true, body: { showId: Number(showId), seatIds } });
-			hold = { ...response, idempotencyKey: crypto.randomUUID() };
+			hold = { ...response, idempotencyKey: uuid() };
 			selected.clear();
 			await reload();
 		});
