@@ -248,7 +248,8 @@ async function renderShow(showId) {
 				<span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span>
 			</div>
 		</div>
-		<div class="card summary" id="summary"></div>`;
+		<div class="card summary" id="summary"></div>
+		${testModeNote()}`;
 
 	const rows = () => {
 		const byRow = new Map();
@@ -418,6 +419,13 @@ async function renderShow(showId) {
 	draw();
 	every(1000, tick);
 	every(POLL_MS, () => { if (!busy) reload().catch(() => {}); }); // other people's holds show up live
+}
+
+// Shown only with Razorpay *test* keys, so reviewers can pay without hunting for test details
+function testModeNote() {
+	if (!state.config.paymentsEnabled || !state.config.razorpayKeyId?.startsWith('rzp_test_')) return '';
+	return `<p class="test-note"><strong>Test mode, no real money.</strong> In the Razorpay window choose <strong>UPI</strong>
+		and enter <code>success@razorpay</code> to pay, or <code>failure@razorpay</code> to see a failed payment.</p>`;
 }
 
 function showSuccess(seatNumbers, amount, bookingId) {

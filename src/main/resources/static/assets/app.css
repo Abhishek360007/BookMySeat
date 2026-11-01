@@ -147,6 +147,8 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .toast.error { background: var(--danger); color: #fff; }
 .success { text-align: center; padding: 32px 16px; }
 .success .big { font-size: 2.5rem; }
+.test-note { margin: 12px 0 0; padding: 10px 14px; border: 1px dashed var(--accent); border-radius: var(--radius); font-size: .9rem; }
+.test-note code { background: var(--seat-free); padding: .05rem .35rem; border-radius: 4px; }
 .footer { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; color: var(--muted); font-size: .85rem; padding: 16px; }
 .empty { text-align: center; padding: 32px 16px; }
 

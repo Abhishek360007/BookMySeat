@@ -14,6 +14,8 @@
 
 **Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`, or click **Use the demo account** in the app. Pick seats on "Dune: Part Three", hold them and book. Please don't use a real password if you register your own account.
 
+**Paying in the demo (Razorpay test mode, no real money):** after holding seats, click **Pay**, choose **UPI** and enter `success@razorpay`. Use `failure@razorpay` to see a failed payment: the order stays open so you can try again, and the seats are released if nobody pays within the 15-minute payment window.
+
 <p>
   <img src="docs/screenshots/seat-map-held.png" alt="Seat map with two seats held and a countdown" width="68%">
   <img src="docs/screenshots/phone.png" alt="The seat map on a phone" width="24%">
