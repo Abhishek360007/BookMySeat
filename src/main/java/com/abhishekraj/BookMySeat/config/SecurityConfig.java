@@ -23,6 +23,8 @@ public class SecurityConfig {
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers("/api/auth/**").permitAll()
+				// The web app (static files served by this same server) and the settings it reads on startup
+				.requestMatchers(HttpMethod.GET, "/", "/index.html", "/assets/**", "/favicon.svg", "/api/config").permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll() // verified by its HMAC signature
 				.requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 				.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/error").permitAll()

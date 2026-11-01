@@ -41,10 +41,13 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -164,6 +167,14 @@ class PaymentApiTest {
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.detail", startsWith("Payment required")));
 		assertThat(bookingRepository.count()).isZero();
+	}
+
+	@Test
+	void configTellsTheWebAppToUseRazorpay_withThePublicKeyOnly() throws Exception {
+		mvc.perform(get("/api/config"))
+				.andExpect(jsonPath("$.paymentsEnabled").value(true))
+				.andExpect(jsonPath("$.razorpayKeyId").value("rzp_test_fake"))
+				.andExpect(content().string(not(containsString(KEY_SECRET))));
 	}
 
 	// ---- 10.2 verify (client callback) ----
