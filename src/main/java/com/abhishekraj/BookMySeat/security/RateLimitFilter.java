@@ -36,7 +36,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 			@Value("${rate-limit.verification-email.max-requests}") int resendMax,
 			@Value("${rate-limit.verification-email.window-seconds}") long resendWindow,
 			@Value("${rate-limit.forgot-password.max-requests}") int forgotMax,
-			@Value("${rate-limit.forgot-password.window-seconds}") long forgotWindow) {
+			@Value("${rate-limit.forgot-password.window-seconds}") long forgotWindow,
+			@Value("${rate-limit.change-password.max-requests}") int changeMax,
+			@Value("${rate-limit.change-password.window-seconds}") long changeWindow) {
 		this.rateLimiter = rateLimiter;
 		this.meterRegistry = meterRegistry;
 		this.rules = Map.of(
@@ -44,7 +46,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 				"/api/auth/register", new Rule("register", registerMax, Duration.ofSeconds(registerWindow)),
 				// each one sends an email: keeps the app from being used to flood an inbox
 				"/api/users/me/verification-email", new Rule("verification-email", resendMax, Duration.ofSeconds(resendWindow)),
-				"/api/auth/forgot-password", new Rule("forgot-password", forgotMax, Duration.ofSeconds(forgotWindow)));
+				"/api/auth/forgot-password", new Rule("forgot-password", forgotMax, Duration.ofSeconds(forgotWindow)),
+				// guessing the current password with a stolen access token
+				"/api/users/me/password", new Rule("change-password", changeMax, Duration.ofSeconds(changeWindow)));
 	}
 
 	@Override

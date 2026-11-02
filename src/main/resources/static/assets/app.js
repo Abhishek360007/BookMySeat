@@ -183,6 +183,7 @@ function requireLogin() {
 		form.addEventListener('submit', submit);
 		document.getElementById('auth-toggle').onclick = () => setMode(!register);
 		document.getElementById('auth-cancel').onclick = () => finish(false);
+		document.getElementById('auth-forgot').onclick = () => finish(false); // the link itself goes to #/forgot
 		document.getElementById('auth-demo').onclick = () => {
 			setMode(false);
 			form.email.value = DEMO.email;
@@ -524,6 +525,123 @@ async function renderVerify(token) {
 	}
 }
 
+// ---------- Account and passwords ----------
+
+/** #/forgot: ask for a reset link. The answer is the same whether or not the account exists. */
+function renderForgot() {
+	app.innerHTML = `
+		<div class="card narrow">
+			<h1>Forgot your password?</h1>
+			<p class="muted">Enter your email and we'll send you a link to choose a new one.</p>
+			<form class="auth-form" id="forgot-form" novalidate>
+				<label>Email <input name="email" type="email" autocomplete="email" required value="${esc(state.user?.email ?? '')}"></label>
+				<p class="form-error" id="forgot-error" role="alert" hidden></p>
+				<button class="btn btn-primary">Send reset link</button>
+			</form>
+		</div>`;
+	const form = document.getElementById('forgot-form');
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		const email = form.email.value.trim();
+		const error = document.getElementById('forgot-error');
+		try {
+			await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
+			form.parentElement.innerHTML = `<h1>Check your inbox</h1>
+				<p>If there's an account for <strong>${esc(email)}</strong>, we've emailed it a link to reset the password.
+				The link works once and expires in 1 hour. Check the spam folder too.</p>
+				<a class="btn btn-ghost" href="#/">Back to shows</a>`;
+		} catch (e) {
+			error.textContent = e.message;
+			error.hidden = false;
+		}
+	};
+}
+
+/** #/reset/<token>: the link from the reset email. */
+function renderReset(token) {
+	history.replaceState(null, '', '#/reset'); // the one-time token leaves the address bar and history
+	app.innerHTML = `
+		<div class="card narrow">
+			<h1>Choose a new password</h1>
+			<form class="auth-form" id="reset-form" novalidate>
+				<label>New password <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+				<label>Repeat it <input name="repeat" type="password" autocomplete="new-password" required minlength="8"></label>
+				<p class="form-error" id="reset-error" role="alert" hidden></p>
+				<button class="btn btn-primary">Set new password</button>
+			</form>
+		</div>`;
+	const form = document.getElementById('reset-form');
+	const error = document.getElementById('reset-error');
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		error.hidden = true;
+		const { password, repeat } = Object.fromEntries(new FormData(form));
+		if (password !== repeat) {
+			error.textContent = "The two passwords don't match";
+			error.hidden = false;
+			return;
+		}
+		try {
+			await api('/api/auth/reset-password', { method: 'POST', body: { token, newPassword: password } });
+			clearSession(); // every session was logged out, this one included
+			updateNav();
+			form.parentElement.innerHTML = `<h1>Password changed</h1>
+				<p class="muted">You've been logged out everywhere. Log in with your new password.</p>
+				<button class="btn btn-primary" type="button" id="reset-login">Log in</button>`;
+			document.getElementById('reset-login').onclick = () => requireLogin().then((ok) => { if (ok) location.hash = '#/'; });
+		} catch (e) {
+			error.innerHTML = `${esc(e.message)} <a href="#/forgot">Send a new link</a>`;
+			error.hidden = false;
+		}
+	};
+}
+
+/** #/account: who you are, and changing the password. */
+async function renderAccount() {
+	if (!(await requireLogin())) {
+		location.hash = '#/';
+		return;
+	}
+	const user = state.user;
+	app.innerHTML = `
+		<h1>Your account</h1>
+		<div class="card narrow">
+			<p><strong>${esc(user.name)}</strong><br><span class="muted">${esc(user.email)}</span>
+				· ${user.emailVerified ? 'email confirmed' : 'email not confirmed yet'}</p>
+		</div>
+		<div class="card narrow" style="margin-top:16px">
+			<h2>Change password</h2>
+			<form class="auth-form" id="password-form" novalidate>
+				<label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+				<label>New password <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+				<label>Repeat new password <input name="repeat" type="password" autocomplete="new-password" required minlength="8"></label>
+				<p class="form-error" id="password-error" role="alert" hidden></p>
+				<button class="btn btn-primary">Change password</button>
+				<p class="muted small">This logs you out on every other device.</p>
+			</form>
+		</div>`;
+	const form = document.getElementById('password-form');
+	const error = document.getElementById('password-error');
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		error.hidden = true;
+		const { current, password, repeat } = Object.fromEntries(new FormData(form));
+		if (password !== repeat) {
+			error.textContent = "The new passwords don't match";
+			error.hidden = false;
+			return;
+		}
+		try {
+			setSession(await api('/api/users/me/password', { method: 'POST', auth: true, body: { currentPassword: current, newPassword: password } }));
+			form.reset();
+			toast('Password changed. Other devices have been logged out.');
+		} catch (e) {
+			error.textContent = e.message;
+			error.hidden = false;
+		}
+	};
+}
+
 // ---------- Router and startup ----------
 
 async function route() {
@@ -533,6 +651,7 @@ async function route() {
 	try {
 		const show = path.match(/^\/show\/(\d+)$/);
 		const verify = path.match(/^\/verify\/([A-Za-z0-9_-]+)$/);
+		const reset = path.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
 		const adminShow = path.match(/^\/admin\/show\/(\d+)$/);
 		if (path === '/admin' || path.startsWith('/admin/')) {
 			// Loaded only when an admin page is opened, so customers never download it
@@ -544,6 +663,10 @@ async function route() {
 		else if (verify) await renderVerify(verify[1]);
 		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else if (path === '/bookings') await renderBookings();
+		else if (path === '/account') await renderAccount();
+		else if (path === '/forgot') renderForgot();
+		else if (reset) renderReset(reset[1]);
+		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else await renderHome(new URLSearchParams(query));
 	} catch (e) {
 		app.innerHTML = `<div class="card empty"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><a href="#/">Back to shows</a></div>`;

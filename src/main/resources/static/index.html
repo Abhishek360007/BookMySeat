@@ -19,7 +19,7 @@
 			<a href="#/">Shows</a>
 			<a href="#/bookings" data-auth-only hidden>My bookings</a>
 			<a href="#/admin" data-admin-only hidden>Admin</a>
-			<span class="who" data-auth-only hidden></span>
+			<a class="who" href="#/account" data-auth-only hidden title="Your account"></a>
 			<button class="btn btn-ghost" id="login-btn" type="button">Log in</button>
 			<button class="btn btn-ghost" id="logout-btn" type="button" data-auth-only hidden>Log out</button>
 		</nav>
@@ -54,6 +54,7 @@
 			<p class="muted small">
 				<button class="link" type="button" id="auth-toggle">No account? Register</button>
 				· <button class="link" type="button" id="auth-demo">Use the demo account</button>
+				· <a href="#/forgot" id="auth-forgot">Forgot password?</a>
 			</p>
 		</form>
 	</dialog>

@@ -159,7 +159,40 @@ class PasswordResetTest {
 		forgot(EMAIL).andExpect(status().isTooManyRequests());
 	}
 
+	@Test
+	void changingThePassword_needsTheCurrentOne_andStartsAFreshSession() throws Exception {
+		String login = login(EMAIL, OLD).andReturn().getResponse().getContentAsString();
+		String access = JsonPath.read(login, "$.accessToken");
+		String oldRefresh = JsonPath.read(login, "$.refreshToken");
+
+		change(access, "Wrong-Password-1", NEW).andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.detail").value("Your current password is incorrect"));
+
+		String fresh = change(access, OLD, NEW).andExpect(status().isOk())
+				.andReturn().getResponse().getContentAsString();
+		mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+				.content("{\"refreshToken\":\"" + oldRefresh + "\"}")).andExpect(status().isUnauthorized());
+		mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+				.content("{\"refreshToken\":\"" + JsonPath.read(fresh, "$.refreshToken") + "\"}")).andExpect(status().isOk());
+		login(EMAIL, NEW).andExpect(status().isOk());
+		await(() -> sender.sentTo(EMAIL).stream().anyMatch(m -> m.subject().equals("Your BookMySeat password was changed")));
+	}
+
+	@Test
+	void theDemoAccountsPassword_cantBeChanged() throws Exception {
+		register("demo-reset@example.com", OLD);
+		String access = JsonPath.read(login("demo-reset@example.com", OLD).andReturn().getResponse().getContentAsString(), "$.accessToken");
+		change(access, OLD, NEW).andExpect(status().isForbidden());
+		login("demo-reset@example.com", OLD).andExpect(status().isOk());
+	}
+
 	// ---- helpers ----
+
+	ResultActions change(String access, String current, String next) throws Exception {
+		return mvc.perform(post("/api/users/me/password").header("Authorization", "Bearer " + access)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"currentPassword\":\"" + current + "\",\"newPassword\":\"" + next + "\"}"));
+	}
 
 	ResultActions forgot(String email) throws Exception {
 		return mvc.perform(post("/api/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
