@@ -17,7 +17,7 @@ function statusBadge(status) {
 
 function soldBar(booked, total) {
 	return `<div class="sold" title="${booked} of ${total} seats sold">
-		<div class="bar"><span style="width:${pct(booked, total)}%"></span></div>
+		<div class="bar"><span data-pct="${pct(booked, total)}"></span></div>
 		<span class="small">${booked}/${total}</span></div>`;
 }
 
@@ -93,6 +93,8 @@ export async function renderAdmin(params) {
 			<span class="muted small">Page ${shows.page + 1} of ${Math.max(shows.totalPages, 1)}</span>
 			<button class="btn btn-ghost" id="next" ${page + 1 >= shows.totalPages ? 'disabled' : ''}>Next</button>
 		</div>`;
+	// Widths are set through the DOM, not style="" attributes, which the Content-Security-Policy blocks
+	box.querySelectorAll('.bar [data-pct]').forEach((bar) => { bar.style.width = `${bar.dataset.pct}%`; });
 	const go = (p) => { const next = new URLSearchParams(params); next.set('page', p); location.hash = `#/admin?${next}`; };
 	document.getElementById('prev').onclick = () => go(page - 1);
 	document.getElementById('next').onclick = () => go(page + 1);
@@ -219,7 +221,7 @@ export async function renderAdminShow(showId) {
 			<div class="seatmap" id="admin-seatmap"></div>
 			<div class="legend"><span><i class="l-free"></i>Available</span><span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span></div>
 		</div>
-		<div class="card" style="margin-top:16px">
+		<div class="card mt">
 			<div class="row spread"><h2>Bookings</h2>
 				<div class="tabs" role="tablist" id="booking-tabs">
 					${['CONFIRMED', 'CANCELLED'].map((s) => `<button type="button" role="tab" class="tab link-tab" data-status="${s}">${s[0] + s.slice(1).toLowerCase()}</button>`).join('')}
@@ -227,7 +229,7 @@ export async function renderAdminShow(showId) {
 			<div id="admin-bookings"></div>
 		</div>
 		${cancelled || started ? '' : `
-		<div class="card" style="margin-top:16px">
+		<div class="card mt">
 			<h2>Edit show</h2>
 			<form class="admin-form" id="edit-show" novalidate>
 				<label>Title <input name="title" required maxlength="150" value="${esc(show.title)}"></label>
@@ -241,7 +243,7 @@ export async function renderAdminShow(showId) {
 				<div class="row"><button class="btn btn-primary" id="save-show">Save changes</button></div>
 			</form>
 		</div>
-		<div class="card danger-zone" style="margin-top:16px">
+		<div class="card danger-zone mt">
 			<h2>Cancel show</h2>
 			<p class="muted">Cancels every booking, refunds online payments and emails every customer. The show disappears from the site. This can't be undone.</p>
 			<button class="btn btn-danger" id="cancel-show">Cancel this show</button>
@@ -274,8 +276,8 @@ export async function renderAdminShow(showId) {
 		if (seats.length === 0) {
 			map.innerHTML = cancelled ? '<p class="muted">No seats.</p>' : `
 				<form class="row" id="gen-seats"><span>No seats yet.</span>
-					<input name="rows" type="number" min="1" max="26" value="5" aria-label="Rows" style="width:6rem">
-					<span>rows ×</span><input name="seatsPerRow" type="number" min="1" max="30" value="10" aria-label="Seats per row" style="width:6rem">
+					<input name="rows" type="number" min="1" max="26" value="5" aria-label="Rows" class="w-6">
+					<span>rows ×</span><input name="seatsPerRow" type="number" min="1" max="30" value="10" aria-label="Seats per row" class="w-6">
 					<button class="btn btn-primary">Generate seats</button></form>`;
 			const gen = document.getElementById('gen-seats');
 			if (gen) gen.onsubmit = async (event) => {
