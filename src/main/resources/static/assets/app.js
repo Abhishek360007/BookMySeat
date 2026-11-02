@@ -108,6 +108,7 @@ function updateNav() {
 	document.querySelectorAll('[data-auth-only]').forEach((el) => { el.hidden = !loggedIn; });
 	document.getElementById('login-btn').hidden = loggedIn;
 	document.querySelector('.who').textContent = state.user ? state.user.email : '';
+	document.querySelectorAll('[data-admin-only]').forEach((el) => { el.hidden = state.user?.role !== 'ADMIN'; });
 	// Verification is optional: unverified users can still book, they just see this reminder
 	document.getElementById('verify-banner').hidden = !loggedIn || state.user.emailVerified !== false;
 	document.getElementById('verify-email').textContent = state.user ? state.user.email : '';
@@ -247,6 +248,13 @@ async function renderHome(params) {
 
 async function renderShow(showId) {
 	const show = await api(`/api/shows/${showId}`);
+	if (show.status === 'CANCELLED') {
+		app.innerHTML = `<a href="#/" class="small">← All shows</a>
+			<div class="card empty"><h1>${esc(show.title)}</h1><p><span class="status CANCELLED">CANCELLED</span></p>
+			<p class="muted">This show has been cancelled. Anyone who had booked it has been refunded and emailed.</p>
+			<a class="btn btn-primary" href="#/">Find another show</a></div>`;
+		return;
+	}
 	let seats = await api(`/api/shows/${showId}/seats`);
 	const selected = new Set();
 	let hold = null; // { seatIds, seatNumbers, expiresAt, idempotencyKey }
@@ -525,7 +533,14 @@ async function route() {
 	try {
 		const show = path.match(/^\/show\/(\d+)$/);
 		const verify = path.match(/^\/verify\/([A-Za-z0-9_-]+)$/);
-		if (show) await renderShow(show[1]);
+		const adminShow = path.match(/^\/admin\/show\/(\d+)$/);
+		if (path === '/admin' || path.startsWith('/admin/')) {
+			// Loaded only when an admin page is opened, so customers never download it
+			const admin = await import('./admin.js');
+			if (adminShow) await admin.renderAdminShow(adminShow[1]);
+			else if (path === '/admin/new') await admin.renderNewShow();
+			else await admin.renderAdmin(new URLSearchParams(query));
+		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);
 		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else if (path === '/bookings') await renderBookings();
@@ -568,3 +583,6 @@ async function start() {
 }
 
 start();
+
+// Shared with the admin pages (assets/admin.js)
+export { api, app, esc, money, when, toast, state, every };

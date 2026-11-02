@@ -145,6 +145,8 @@ class ShowCancellationApiTest {
 		mvc.perform(get("/api/admin/shows?when=ALL").header("Authorization", "Bearer " + admin))
 				.andExpect(jsonPath("$.content[0].status").value("CANCELLED"))
 				.andExpect(jsonPath("$.content[0].confirmedBookings").value(0));
+		mvc.perform(get("/api/admin/shows").header("Authorization", "Bearer " + admin)) // UPCOMING: scheduled shows only
+				.andExpect(jsonPath("$.totalElements").value(0));
 
 		// And it can't be booked any more
 		String late = registerAndLogin("late@example.com");

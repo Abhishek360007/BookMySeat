@@ -47,7 +47,10 @@ public class AdminDashboardService {
 	public PageResponse<AdminShowResponse> shows(When when, String text, Pageable pageable) {
 		Instant now = Instant.now(clock);
 		List<Specification<Show>> filters = new ArrayList<>();
-		if (when == When.UPCOMING) filters.add(ShowSpecifications.startsAtOrAfter(now));
+		if (when == When.UPCOMING) {
+			filters.add(ShowSpecifications.startsAtOrAfter(now));
+			filters.add(ShowSpecifications.scheduled()); // cancelled shows are listed under ALL
+		}
 		if (when == When.PAST) filters.add(ShowSpecifications.startsBefore(now));
 		if (text != null && !text.isBlank()) filters.add(ShowSpecifications.titleContains(text));
 
