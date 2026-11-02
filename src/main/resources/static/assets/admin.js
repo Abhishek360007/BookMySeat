@@ -1,6 +1,6 @@
 // Admin pages of the web app. Loaded on demand (import()) only when an admin opens #/admin, so customers never
 // download it. Every action goes through the same ADMIN-only REST API that Swagger documents.
-import { api, app, esc, money, when, toast, state } from './app.js';
+import { api, app, esc, money, when, toast, state, every } from './app.js';
 
 const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : 0);
 
@@ -199,5 +199,181 @@ export async function renderNewShow() {
 
 export async function renderAdminShow(showId) {
 	if (!requireAdmin()) return;
-	app.innerHTML = `<a href="#/admin" class="small">← Admin</a><p class="muted">Show ${esc(showId)}: details coming next.</p>`;
+	const [show, venues] = await Promise.all([api(`/api/shows/${showId}`), api('/api/venues')]);
+	const cancelled = show.status === 'CANCELLED';
+	const started = new Date(show.startTime) <= new Date();
+	let bookingStatus = 'CONFIRMED';
+	let bookingPage = 0;
+
+	app.innerHTML = `
+		<a href="#/admin" class="small">← Admin</a>
+		<div class="row spread">
+			<div><h1>${esc(show.title)} ${statusBadge(show.status)}</h1>
+				<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(money.format(show.price))} per seat
+				· <a href="#/show/${show.id}">customer view</a></p></div>
+		</div>
+		<div class="kpis" id="show-kpis"></div>
+		<div class="card">
+			<div class="row spread"><h2>Seat map</h2><span class="muted small">Refreshes every 10 s</span></div>
+			<div class="screen">SCREEN</div>
+			<div class="seatmap" id="admin-seatmap"></div>
+			<div class="legend"><span><i class="l-free"></i>Available</span><span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span></div>
+		</div>
+		<div class="card" style="margin-top:16px">
+			<div class="row spread"><h2>Bookings</h2>
+				<div class="tabs" role="tablist" id="booking-tabs">
+					${['CONFIRMED', 'CANCELLED'].map((s) => `<button type="button" role="tab" class="tab link-tab" data-status="${s}">${s[0] + s.slice(1).toLowerCase()}</button>`).join('')}
+				</div></div>
+			<div id="admin-bookings"></div>
+		</div>
+		${cancelled || started ? '' : `
+		<div class="card" style="margin-top:16px">
+			<h2>Edit show</h2>
+			<form class="admin-form" id="edit-show" novalidate>
+				<label>Title <input name="title" required maxlength="150" value="${esc(show.title)}"></label>
+				<div class="form-row">
+					<label>Starts (India time) <input name="startTime" type="datetime-local" required value="${toLocalInput(show.startTime)}"></label>
+					<label>Price per seat (₹) <input name="price" type="number" min="0" step="0.01" required value="${show.price}"></label>
+				</div>
+				<div class="field"><label for="edit-venue">Venue</label><select name="venueId" id="edit-venue">${venueOptions(venues, show.venueId)}</select></div>
+				<p class="muted small" id="edit-hint"></p>
+				<p class="form-error" id="edit-error" role="alert" hidden></p>
+				<div class="row"><button class="btn btn-primary" id="save-show">Save changes</button></div>
+			</form>
+		</div>
+		<div class="card danger-zone" style="margin-top:16px">
+			<h2>Cancel show</h2>
+			<p class="muted">Cancels every booking, refunds online payments and emails every customer. The show disappears from the site. This can't be undone.</p>
+			<button class="btn btn-danger" id="cancel-show">Cancel this show</button>
+		</div>`}`;
+
+	let summary = null;
+	const loadSummary = async () => {
+		summary = await api(`/api/admin/shows/${showId}/summary`, { auth: true });
+		document.getElementById('show-kpis').innerHTML = `
+			<div class="card kpi"><span class="muted small">Revenue</span><strong>${esc(money.format(summary.revenue))}</strong>
+				<span class="small muted">${summary.confirmedBookings} confirmed booking${summary.confirmedBookings === 1 ? '' : 's'}</span></div>
+			<div class="card kpi"><span class="muted small">Seats sold</span><strong>${summary.booked}/${summary.totalSeats}</strong>
+				<span class="small muted">${pct(summary.booked, summary.totalSeats)}% of the house</span></div>
+			<div class="card kpi"><span class="muted small">Held right now</span><strong>${summary.held}</strong>
+				<span class="small muted">${summary.available} available</span></div>`;
+		const hint = document.getElementById('edit-hint');
+		if (hint) {
+			const booked = summary.confirmedBookings > 0;
+			document.getElementById('edit-venue').disabled = booked;
+			hint.textContent = booked
+				? `${summary.confirmedBookings} booking(s): the venue is locked, a new time is emailed to every customer, and a new price applies only to new bookings.`
+				: 'No bookings yet: anything can change.';
+		}
+	};
+
+	const loadSeats = async () => {
+		const seats = await api(`/api/shows/${showId}/seats`);
+		const map = document.getElementById('admin-seatmap');
+		if (!map) return;
+		if (seats.length === 0) {
+			map.innerHTML = cancelled ? '<p class="muted">No seats.</p>' : `
+				<form class="row" id="gen-seats"><span>No seats yet.</span>
+					<input name="rows" type="number" min="1" max="26" value="5" aria-label="Rows" style="width:6rem">
+					<span>rows ×</span><input name="seatsPerRow" type="number" min="1" max="30" value="10" aria-label="Seats per row" style="width:6rem">
+					<button class="btn btn-primary">Generate seats</button></form>`;
+			const gen = document.getElementById('gen-seats');
+			if (gen) gen.onsubmit = async (event) => {
+				event.preventDefault();
+				const f = Object.fromEntries(new FormData(gen));
+				try {
+					await api(`/api/shows/${showId}/seats`, { method: 'POST', auth: true, body: { rows: Number(f.rows), seatsPerRow: Number(f.seatsPerRow) } });
+					toast('Seats generated');
+					await Promise.all([loadSeats(), loadSummary()]);
+				} catch (e) { toast(e.message, 'error'); }
+			};
+			return;
+		}
+		const byRow = new Map();
+		for (const seat of seats) {
+			const [, row, num] = seat.seatNumber.match(/^([A-Z]+)(\d+)$/) || [null, '?', '0'];
+			if (!byRow.has(row)) byRow.set(row, []);
+			byRow.get(row).push({ ...seat, num: Number(num) });
+		}
+		map.innerHTML = [...byRow.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([row, list]) => `
+			<div class="seat-row"><span class="row-label">${esc(row)}</span>
+				${list.sort((a, b) => a.num - b.num).map((s) => `<span class="seat ${s.status.toLowerCase()} static"
+					role="img" aria-label="Seat ${esc(s.seatNumber)}, ${s.status.toLowerCase()}">${s.num}</span>`).join('')}
+			</div>`).join('');
+	};
+
+	const loadBookings = async () => {
+		document.querySelectorAll('#booking-tabs [data-status]').forEach((b) => {
+			b.classList.toggle('active', b.dataset.status === bookingStatus);
+			b.setAttribute('aria-selected', String(b.dataset.status === bookingStatus));
+		});
+		const page = await api(`/api/admin/shows/${showId}/bookings?status=${bookingStatus}&page=${bookingPage}&size=10`, { auth: true });
+		const box = document.getElementById('admin-bookings');
+		if (page.content.length === 0) {
+			box.innerHTML = `<p class="muted">No ${bookingStatus.toLowerCase()} bookings.</p>`;
+			return;
+		}
+		box.innerHTML = `
+			<div class="table-wrap"><table class="table">
+				<thead><tr><th>#</th><th>Customer</th><th>Seats</th><th>Booked</th><th class="num">Amount</th></tr></thead>
+				<tbody>${page.content.map((b) => `<tr><td>${b.id}</td><td>${esc(b.userEmail)}</td><td>${esc(b.seats.join(', '))}</td>
+					<td class="small">${esc(when.format(new Date(b.createdAt)))}</td><td class="num">${esc(money.format(b.totalAmount))}</td></tr>`).join('')}
+				</tbody></table></div>
+			<div class="row spread pager">
+				<button class="btn btn-ghost" id="b-prev" ${bookingPage === 0 ? 'disabled' : ''}>Previous</button>
+				<span class="muted small">Page ${page.page + 1} of ${Math.max(page.totalPages, 1)} · ${page.totalElements} total</span>
+				<button class="btn btn-ghost" id="b-next" ${bookingPage + 1 >= page.totalPages ? 'disabled' : ''}>Next</button>
+			</div>`;
+		document.getElementById('b-prev').onclick = () => { bookingPage--; loadBookings(); };
+		document.getElementById('b-next').onclick = () => { bookingPage++; loadBookings(); };
+	};
+	document.querySelectorAll('#booking-tabs [data-status]').forEach((b) => {
+		b.onclick = () => { bookingStatus = b.dataset.status; bookingPage = 0; loadBookings(); };
+	});
+
+	await Promise.all([loadSummary(), loadSeats(), loadBookings()]);
+	if (!cancelled) every(10_000, () => Promise.all([loadSeats(), loadSummary()]).catch(() => {}));
+
+	const form = document.getElementById('edit-show');
+	if (form) {
+		form.onsubmit = async (event) => {
+			event.preventDefault();
+			const error = document.getElementById('edit-error');
+			error.hidden = true;
+			const f = Object.fromEntries(new FormData(form));
+			const startTime = fromLocalInput(f.startTime);
+			const moved = new Date(startTime).getTime() !== new Date(show.startTime).getTime();
+			try {
+				await api(`/api/shows/${showId}`, { method: 'PUT', auth: true, body: {
+					title: f.title.trim(), startTime, price: Number(f.price), venueId: Number(f.venueId ?? show.venueId) } });
+				toast(moved && summary?.confirmedBookings ? `Saved. ${summary.confirmedBookings} customer(s) were emailed the new time.` : 'Saved');
+				renderAdminShow(showId);
+			} catch (e) {
+				error.textContent = e.message;
+				error.hidden = false;
+			}
+		};
+		// A disabled select isn't submitted: keep the current venue
+		form.addEventListener('formdata', (event) => { if (!event.formData.has('venueId')) event.formData.set('venueId', show.venueId); });
+	}
+
+	const cancelButton = document.getElementById('cancel-show');
+	if (cancelButton) {
+		cancelButton.onclick = async () => {
+			const n = summary?.confirmedBookings ?? 0;
+			const message = n
+				? `Cancel "${show.title}"? ${n} booking(s) will be cancelled, online payments refunded and every customer emailed. This can't be undone.`
+				: `Cancel "${show.title}"? It will disappear from the site. This can't be undone.`;
+			if (!window.confirm(message)) return;
+			cancelButton.disabled = true;
+			try {
+				const result = await api(`/api/shows/${showId}/cancel`, { method: 'POST', auth: true });
+				toast(`Show cancelled. ${result.cancelledBookings} booking(s) cancelled and refunded.`);
+				renderAdminShow(showId);
+			} catch (e) {
+				toast(e.message, 'error');
+				cancelButton.disabled = false;
+			}
+		};
+	}
 }
