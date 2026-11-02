@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.time.Instant;
 import java.util.List;
 
 public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificationExecutor<Show> {
@@ -25,4 +26,6 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 	Page<Show> findAll(Specification<Show> spec, Pageable pageable);
 
 	boolean existsByVenueId(Long venueId);
+
+	long countByStartTimeAfter(Instant now);
 }

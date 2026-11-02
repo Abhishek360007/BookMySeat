@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Collection;
 
 import java.util.List;
 import java.util.Optional;
@@ -30,4 +32,19 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 	BigDecimal sumTotal(Long showId, BookingStatus status);
 
 	long countByShowIdAndStatus(Long showId, BookingStatus status);
+
+	@Query("""
+			select new com.abhishekraj.BookMySeat.repository.ShowStats$Sales(b.show.id, count(b), coalesce(sum(b.totalAmount), 0))
+			from Booking b where b.show.id in :showIds and b.status = :status group by b.show.id""")
+	List<ShowStats.Sales> salesByShow(Collection<Long> showIds, BookingStatus status);
+
+	long countByStatus(BookingStatus status);
+
+	long countByStatusAndCreatedAtAfter(BookingStatus status, Instant after);
+
+	@Query("select coalesce(sum(b.totalAmount), 0) from Booking b where b.status = :status")
+	BigDecimal sumTotalByStatus(BookingStatus status);
+
+	@Query("select coalesce(sum(b.totalAmount), 0) from Booking b where b.status = :status and b.createdAt > :after")
+	BigDecimal sumTotalByStatusAndCreatedAtAfter(BookingStatus status, Instant after);
 }
