@@ -15,7 +15,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 
-// Per-IP limits on the public auth endpoints: slows password guessing and sign-up spam.
+// Per-IP limits on the auth endpoints: slows password guessing, sign-up spam and verification-email floods.
 // The client IP is getRemoteAddr(); in prod, server.forward-headers-strategy makes that the
 // address from Render's proxy (X-Forwarded-For).
 @Slf4j
@@ -32,12 +32,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
 			@Value("${rate-limit.login.max-requests}") int loginMax,
 			@Value("${rate-limit.login.window-seconds}") long loginWindow,
 			@Value("${rate-limit.register.max-requests}") int registerMax,
-			@Value("${rate-limit.register.window-seconds}") long registerWindow) {
+			@Value("${rate-limit.register.window-seconds}") long registerWindow,
+			@Value("${rate-limit.verification-email.max-requests}") int resendMax,
+			@Value("${rate-limit.verification-email.window-seconds}") long resendWindow) {
 		this.rateLimiter = rateLimiter;
 		this.meterRegistry = meterRegistry;
 		this.rules = Map.of(
 				"/api/auth/login", new Rule("login", loginMax, Duration.ofSeconds(loginWindow)),
-				"/api/auth/register", new Rule("register", registerMax, Duration.ofSeconds(registerWindow)));
+				"/api/auth/register", new Rule("register", registerMax, Duration.ofSeconds(registerWindow)),
+				// each one sends an email: keeps the app from being used to flood an inbox
+				"/api/users/me/verification-email", new Rule("verification-email", resendMax, Duration.ofSeconds(resendWindow)));
 	}
 
 	@Override

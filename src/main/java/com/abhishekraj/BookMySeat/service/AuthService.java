@@ -28,6 +28,7 @@ public class AuthService {
 	private final PasswordEncoder passwordEncoder;
 	private final JwtService jwtService;
 	private final RefreshTokenService refreshTokenService;
+	private final EmailVerificationService emailVerification;
 
 	@Transactional
 	public UserResponse register(RegisterRequest request) {
@@ -42,7 +43,9 @@ public class AuthService {
 		user.setPassword(passwordEncoder.encode(request.password()));
 		user.setRole(Role.USER);
 
-		return UserResponse.from(userRepository.save(user));
+		User saved = userRepository.save(user);
+		emailVerification.sendLink(saved); // queued with the registration: no account, no email
+		return UserResponse.from(saved);
 	}
 
 	@Transactional // not read-only: it stores a new refresh token

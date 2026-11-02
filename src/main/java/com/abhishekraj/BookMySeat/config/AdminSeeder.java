@@ -12,6 +12,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Locale;
 
 @Slf4j
@@ -50,6 +51,7 @@ public class AdminSeeder implements ApplicationRunner {
 		admin.setEmail(email);
 		admin.setPassword(passwordEncoder.encode(adminPassword));
 		admin.setRole(Role.ADMIN);
+		admin.setEmailVerifiedAt(Instant.now()); // the operator chose this address
 		userRepository.save(admin);
 		log.info("Created admin account {}", email);
 	}

@@ -35,4 +35,10 @@ public class User {
 	@CreationTimestamp
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
+
+	private Instant emailVerifiedAt; // null until the user opens the link from the verification email
+
+	public boolean isEmailVerified() {
+		return emailVerifiedAt != null;
+	}
 }

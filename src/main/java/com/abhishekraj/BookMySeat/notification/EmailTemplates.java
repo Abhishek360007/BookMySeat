@@ -4,11 +4,13 @@ import com.abhishekraj.BookMySeat.entity.Booking;
 import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
+import com.abhishekraj.BookMySeat.entity.User;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
@@ -28,6 +30,26 @@ public class EmailTemplates {
 
 	public EmailTemplates(EmailProperties properties) {
 		this.properties = properties;
+	}
+
+	public EmailMessage verifyEmail(User user, String token, Duration linkLifetime) {
+		// The token travels in the URL fragment (#...), which browsers never send to servers or proxies' logs
+		String link = url("verify/" + token);
+		String text = """
+				Hi %s,
+
+				Please confirm this is your email address by opening this link:
+				%s
+
+				The link works once and expires in %d hours. If you didn't create a BookMySeat account, ignore this email.
+				""".formatted(user.getName(), link, linkLifetime.toHours());
+		String html = layout("Confirm your email", """
+				<p>Hi %s,</p>
+				<p>Please confirm this is your email address.</p>
+				%s
+				<p style="color:#646779">The link works once and expires in %d hours. If you didn't create a BookMySeat account, ignore this email.</p>"""
+				.formatted(esc(user.getName()), button("Confirm my email", link), linkLifetime.toHours()));
+		return new EmailMessage(user.getEmail(), "Confirm your email for BookMySeat", text, html);
 	}
 
 	public EmailMessage bookingConfirmed(Booking booking) {

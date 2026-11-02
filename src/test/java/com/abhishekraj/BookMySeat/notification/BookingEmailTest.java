@@ -76,6 +76,7 @@ class BookingEmailTest {
 
 	@BeforeEach
 	void setUp() throws Exception {
+		sender.reset(); // a previous test may have left the provider "down"
 		admin = login("mail-test-admin@example.com", "Mail-Test-Admin-Pw-1");
 		// A title with HTML in it: the HTML email must escape it
 		showId = createShow("Dune <Part Three> & More");
