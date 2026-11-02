@@ -1,11 +1,13 @@
 package com.abhishekraj.BookMySeat.notification;
 
+import com.abhishekraj.BookMySeat.entity.BookingStatus;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.payment.PaymentRefundedEvent;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
 import com.abhishekraj.BookMySeat.service.BookingConfirmedEvent;
+import com.abhishekraj.BookMySeat.service.ShowRescheduledEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -34,8 +36,15 @@ public class BookingEmails {
 			boolean paid = paymentRepository.findByBookingId(booking.getId())
 					.filter(p -> p.getStatus() == PaymentStatus.REFUND_PENDING || p.getStatus() == PaymentStatus.CONFIRMED)
 					.isPresent();
-			outbox.enqueue("BOOKING_CANCELLED", templates.bookingCancelled(booking, paid));
+			outbox.enqueue(event.showCancelled() ? "SHOW_CANCELLED" : "BOOKING_CANCELLED",
+					templates.bookingCancelled(booking, paid, event.showCancelled()));
 		});
+	}
+
+	@EventListener
+	public void onRescheduled(ShowRescheduledEvent event) {
+		bookingRepository.findAllByShowIdAndStatus(event.showId(), BookingStatus.CONFIRMED).forEach(booking ->
+				outbox.enqueue("SHOW_RESCHEDULED", templates.showRescheduled(booking, event.previousStartTime())));
 	}
 
 	@EventListener

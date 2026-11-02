@@ -1,6 +1,7 @@
 package com.abhishekraj.BookMySeat.repository;
 
 import com.abhishekraj.BookMySeat.entity.Show;
+import com.abhishekraj.BookMySeat.entity.ShowStatus;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.time.Instant;
@@ -10,6 +11,10 @@ import java.util.Locale;
 public final class ShowSpecifications {
 
 	private ShowSpecifications() {}
+
+	public static Specification<Show> scheduled() {
+		return (root, query, cb) -> cb.equal(root.get("status"), ShowStatus.SCHEDULED);
+	}
 
 	public static Specification<Show> inCity(String city) {
 		return (root, query, cb) -> cb.equal(cb.lower(root.get("venue").get("city")), city.trim().toLowerCase(Locale.ROOT));

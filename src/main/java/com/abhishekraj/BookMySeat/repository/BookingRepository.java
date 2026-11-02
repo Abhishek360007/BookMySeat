@@ -33,6 +33,10 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
 	long countByShowIdAndStatus(Long showId, BookingStatus status);
 
+	// Every booking of a show (to cancel or notify them all); the seats come in batched IN (...) queries
+	@EntityGraph(attributePaths = {"user"})
+	List<Booking> findAllByShowIdAndStatus(Long showId, BookingStatus status);
+
 	@Query("""
 			select new com.abhishekraj.BookMySeat.repository.ShowStats$Sales(b.show.id, count(b), coalesce(sum(b.totalAmount), 0))
 			from Booking b where b.show.id in :showIds and b.status = :status group by b.show.id""")

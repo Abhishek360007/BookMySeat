@@ -89,7 +89,7 @@ class BookingServiceTest {
 	@Test
 	void confirm_showAlreadyStarted_isRejected() {
 		Show show = show("2026-11-01T09:00:00Z");
-		when(showRepository.findById(show.getId())).thenReturn(Optional.of(show));
+		when(showRepository.findForBookingById(show.getId())).thenReturn(Optional.of(show)); // confirm locks the show row
 
 		assertThatThrownBy(() -> bookingService.confirm(USER_ID, new ConfirmBookingRequest(show.getId(), List.of(100L))))
 				.isInstanceOf(ConflictException.class)

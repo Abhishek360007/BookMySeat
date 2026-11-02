@@ -73,6 +73,9 @@ public class PaymentService {
 		Instant now = Instant.now(clock);
 		Show show = showRepository.findById(request.showId())
 				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + request.showId()));
+		if (show.isCancelled()) {
+			throw new ConflictException("Show " + show.getId() + " has been cancelled");
+		}
 		if (!now.isBefore(show.getStartTime())) {
 			throw new ConflictException("Show " + show.getId() + " has already started");
 		}

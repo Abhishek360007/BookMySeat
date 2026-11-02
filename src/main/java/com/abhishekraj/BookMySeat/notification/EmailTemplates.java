@@ -85,27 +85,63 @@ public class EmailTemplates {
 		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
 	}
 
-	public EmailMessage bookingCancelled(Booking booking, boolean refundOnItsWay) {
+	/** showCancelled: the venue called off the whole show (not the customer cancelling their booking). */
+	public EmailMessage bookingCancelled(Booking booking, boolean refundOnItsWay, boolean showCancelled) {
 		Show show = booking.getShow();
 		String refundNote = refundOnItsWay
 				? "Your payment of " + money(booking.getTotalAmount()) + " is being refunded; we'll email you when it's done."
 				: "";
-		String subject = "Booking cancelled: " + show.getTitle();
+		String what = showCancelled
+				? "We're sorry: this show has been cancelled, so booking #" + booking.getId() + " is cancelled too."
+				: "Booking #" + booking.getId() + " is cancelled.";
+		String subject = (showCancelled ? "Show cancelled: " : "Booking cancelled: ") + show.getTitle();
 		String text = """
 				Hi %s,
 
-				Booking #%d is cancelled.
+				%s
 				Show: %s
 				When: %s
 				Seats: %s
 				%s
-				""".formatted(booking.getUser().getName(), booking.getId(), show.getTitle(), when(show.getStartTime()),
+				""".formatted(booking.getUser().getName(), what, show.getTitle(), when(show.getStartTime()),
 				seats(booking), refundNote);
-		String html = layout("Booking cancelled", """
+		String html = layout(showCancelled ? "Show cancelled" : "Booking cancelled", """
 				<p>Hi %s,</p>
-				<p>Booking <b>#%d</b> for <b>%s</b> (%s, seats %s) is cancelled.</p>
-				%s""".formatted(esc(booking.getUser().getName()), booking.getId(), esc(show.getTitle()),
+				<p>%s</p>
+				<p><b>%s</b>, %s, seats %s</p>
+				%s""".formatted(esc(booking.getUser().getName()), esc(what), esc(show.getTitle()),
 				when(show.getStartTime()), esc(seats(booking)), refundNote.isEmpty() ? "" : "<p>" + refundNote + "</p>"));
+		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
+	}
+
+	public EmailMessage showRescheduled(Booking booking, Instant previousStart) {
+		Show show = booking.getShow();
+		String subject = "New time for " + show.getTitle() + ": " + when(show.getStartTime());
+		String text = """
+				Hi %s,
+
+				%s has moved to a new time. Your booking #%d and seats stay the same.
+				Was: %s
+				Now: %s
+				Where: %s
+				Seats: %s
+
+				If the new time doesn't work for you, you can cancel until 2 hours before the show (online payments are refunded in full): %s
+				""".formatted(booking.getUser().getName(), show.getTitle(), booking.getId(), when(previousStart),
+				when(show.getStartTime()), show.getVenue().getName(), seats(booking), bookingsUrl());
+		String html = layout("New show time", """
+				<p>Hi %s,</p>
+				<p><b>%s</b> has moved to a new time. Your booking <b>#%d</b> and seats stay the same.</p>
+				<table cellpadding="4" style="border-collapse:collapse">
+				<tr><td style="color:#646779">Was</td><td><s>%s</s></td></tr>
+				<tr><td style="color:#646779">Now</td><td><b>%s</b></td></tr>
+				<tr><td style="color:#646779">Where</td><td>%s</td></tr>
+				<tr><td style="color:#646779">Seats</td><td>%s</td></tr>
+				</table>
+				<p>If the new time doesn't work for you, you can cancel until 2 hours before the show (online payments are refunded in full).</p>
+				%s""".formatted(esc(booking.getUser().getName()), esc(show.getTitle()), booking.getId(),
+				when(previousStart), when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats(booking)),
+				button("View my bookings", bookingsUrl())));
 		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
 	}
 

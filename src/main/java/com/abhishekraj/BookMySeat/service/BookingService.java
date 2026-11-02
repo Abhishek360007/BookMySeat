@@ -80,7 +80,7 @@ public class BookingService {
 	@Transactional(readOnly = true)
 	public HoldResponse holdSeats(Long userId, HoldRequest request) {
 		Show show = findShow(request.showId());
-		requireNotStarted(show);
+		requireBookable(show);
 		List<Seat> seats = loadSeatsForShow(show.getId(), request.seatIds());
 
 		for (Seat seat : seats) {
@@ -109,8 +109,8 @@ public class BookingService {
 	@Transactional
 	public BookingResponse confirm(Long userId, ConfirmBookingRequest request) {
 		Set<Long> seatIds = new LinkedHashSet<>(request.seatIds());
-		Show show = findShow(request.showId());
-		requireNotStarted(show);
+		Show show = lockShowForBooking(request.showId());
+		requireBookable(show);
 		List<Seat> seats = loadSeatsForShow(show.getId(), request.seatIds());
 
 		if (!seatHoldService.isHeldBy(show.getId(), seatIds, userId)) {
@@ -149,9 +149,9 @@ public class BookingService {
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public Optional<Booking> tryConfirmPaid(Long userId, Long showId, Collection<Long> seatIds, BigDecimal paidAmount) {
-		Show show = findShow(showId);
-		if (!Instant.now(clock).isBefore(show.getStartTime())) {
-			return Optional.empty();
+		Show show = lockShowForBooking(showId);
+		if (show.isCancelled() || !Instant.now(clock).isBefore(show.getStartTime())) {
+			return Optional.empty(); // the caller refunds
 		}
 		List<Seat> seats = seatRepository.findAllById(seatIds);
 		if (seats.size() != seatIds.size() || seats.stream().anyMatch(seat -> seat.getStatus() != SeatStatus.AVAILABLE)
@@ -188,7 +188,7 @@ public class BookingService {
 					+ " minutes before the show starts");
 		}
 		booking.cancel();
-		events.publishEvent(new BookingCancelledEvent(booking.getId())); // e.g. refund a paid booking
+		events.publishEvent(new BookingCancelledEvent(booking.getId(), false)); // e.g. refund a paid booking
 		bookingsCancelled.increment();
 		return BookingResponse.from(booking);
 	}
@@ -212,7 +212,16 @@ public class BookingService {
 				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + showId));
 	}
 
-	private void requireNotStarted(Show show) {
+	/** Shared row lock: a show can't be cancelled while a booking for it is being confirmed (see ShowService.cancel). */
+	private Show lockShowForBooking(Long showId) {
+		return showRepository.findForBookingById(showId)
+				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + showId));
+	}
+
+	private void requireBookable(Show show) {
+		if (show.isCancelled()) {
+			throw new ConflictException("Show " + show.getId() + " has been cancelled");
+		}
 		if (!Instant.now(clock).isBefore(show.getStartTime())) {
 			throw new ConflictException("Show " + show.getId() + " has already started");
 		}

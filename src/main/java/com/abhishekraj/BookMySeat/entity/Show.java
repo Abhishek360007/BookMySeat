@@ -31,4 +31,19 @@ public class Show {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "venue_id")
 	private Venue venue;
+
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 20)
+	private ShowStatus status = ShowStatus.SCHEDULED;
+
+	private Instant cancelledAt;
+
+	public boolean isCancelled() {
+		return status == ShowStatus.CANCELLED;
+	}
+
+	public void cancel(Instant now) {
+		this.status = ShowStatus.CANCELLED;
+		this.cancelledAt = now;
+	}
 }

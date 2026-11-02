@@ -21,6 +21,6 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
 	@Query("""
 			select new com.abhishekraj.BookMySeat.repository.ShowStats$SeatTotals(count(s),
 			    coalesce(sum(case when s.status = com.abhishekraj.BookMySeat.entity.SeatStatus.BOOKED then 1L else 0L end), 0L))
-			from Seat s where s.show.startTime > :now""")
+			from Seat s where s.show.startTime > :now and s.show.status = com.abhishekraj.BookMySeat.entity.ShowStatus.SCHEDULED""")
 	ShowStats.SeatTotals countUpcoming(Instant now);
 }

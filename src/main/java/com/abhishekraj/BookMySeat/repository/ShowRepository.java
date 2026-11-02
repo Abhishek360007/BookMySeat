@@ -1,15 +1,20 @@
 package com.abhishekraj.BookMySeat.repository;
 
 import com.abhishekraj.BookMySeat.entity.Show;
+import com.abhishekraj.BookMySeat.entity.ShowStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificationExecutor<Show> {
 
@@ -27,5 +32,15 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 
 	boolean existsByVenueId(Long venueId);
 
-	long countByStartTimeAfter(Instant now);
+	long countByStatusAndStartTimeAfter(ShowStatus status, Instant now);
+
+	// FOR SHARE: many bookings can confirm at once, but a show can't be cancelled in the middle of one
+	@Lock(LockModeType.PESSIMISTIC_READ)
+	@Query("select s from Show s where s.id = :id")
+	Optional<Show> findForBookingById(Long id);
+
+	// FOR UPDATE: waits for confirms in progress to commit, and blocks new ones until the cancel commits
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select s from Show s where s.id = :id")
+	Optional<Show> findForUpdateById(Long id);
 }

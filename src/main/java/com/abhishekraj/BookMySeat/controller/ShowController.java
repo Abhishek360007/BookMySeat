@@ -1,9 +1,11 @@
 package com.abhishekraj.BookMySeat.controller;
 
 import com.abhishekraj.BookMySeat.dto.PageResponse;
+import com.abhishekraj.BookMySeat.dto.ShowCancelResponse;
 import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.service.ShowService;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -57,6 +59,15 @@ public class ShowController {
 	@PutMapping("/{id}")
 	public ShowResponse update(@PathVariable Long id, @Valid @RequestBody ShowRequest request) {
 		return showService.update(id, request);
+	}
+
+	@Operation(summary = "Cancel a show (ADMIN)",
+			description = "Cancels every confirmed booking, refunds the paid ones and emails every customer. The show "
+					+ "disappears from listings and search and can no longer be booked. 409 if it already started or is cancelled. "
+					+ "Updating a show with bookings can't change its venue; changing its time emails the customers.")
+	@PostMapping("/{id}/cancel")
+	public ShowCancelResponse cancel(@PathVariable Long id) {
+		return showService.cancel(id);
 	}
 
 	@DeleteMapping("/{id}")

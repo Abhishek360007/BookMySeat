@@ -5,6 +5,7 @@ import com.abhishekraj.BookMySeat.dto.AdminShowResponse;
 import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.entity.BookingStatus;
 import com.abhishekraj.BookMySeat.entity.Show;
+import com.abhishekraj.BookMySeat.entity.ShowStatus;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
@@ -64,7 +65,7 @@ public class AdminDashboardService {
 			ShowStats.Seats s = seats.getOrDefault(show.getId(), new ShowStats.Seats(show.getId(), 0, 0));
 			ShowStats.Sales b = sales.getOrDefault(show.getId(), new ShowStats.Sales(show.getId(), 0, BigDecimal.ZERO));
 			return new AdminShowResponse(show.getId(), show.getTitle(), show.getStartTime(), show.getPrice(),
-					show.getVenue().getId(), show.getVenue().getName(), show.getVenue().getCity(),
+					show.getVenue().getId(), show.getVenue().getName(), show.getVenue().getCity(), show.getStatus(),
 					s.total(), s.booked(), b.bookings(), b.revenue().setScale(2));
 		});
 	}
@@ -75,7 +76,7 @@ public class AdminDashboardService {
 		Instant weekAgo = now.minus(Duration.ofDays(7));
 		ShowStats.SeatTotals upcomingSeats = seatRepository.countUpcoming(now);
 		return new AdminOverviewResponse(
-				showRepository.countByStartTimeAfter(now),
+				showRepository.countByStatusAndStartTimeAfter(ShowStatus.SCHEDULED, now),
 				bookingRepository.countByStatus(BookingStatus.CONFIRMED),
 				bookingRepository.sumTotalByStatus(BookingStatus.CONFIRMED).setScale(2),
 				bookingRepository.countByStatusAndCreatedAtAfter(BookingStatus.CONFIRMED, weekAgo),
