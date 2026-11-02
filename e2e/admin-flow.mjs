@@ -69,7 +69,7 @@ try {
 	await customer.getByRole('button', { name: 'Log in' }).click();
 	await customer.getByRole('button', { name: 'Use the demo account' }).click();
 	await customer.locator('#logout-btn:not([hidden])').waitFor();
-	check(await customer.getByRole('link', { name: 'Admin' }).isHidden(), 'customers get no Admin link');
+	check(await customer.getByRole('link', { name: 'Admin', exact: true }).isHidden(), 'customers get no Admin link');
 	await customer.goto(`${BASE}/#/admin`);
 	await customer.getByRole('heading', { name: 'Admins only' }).waitFor();
 	check(true, 'a customer opening #/admin is turned away');
@@ -80,7 +80,7 @@ try {
 	watchForErrors(admin, 'admin');
 	await admin.goto(`${BASE}/`);
 	await logIn(admin, ADMIN_EMAIL, ADMIN_PASSWORD);
-	await admin.getByRole('link', { name: 'Admin' }).click();
+	await admin.getByRole('link', { name: 'Admin', exact: true }).click();
 	await admin.getByRole('heading', { name: 'Admin', exact: true }).waitFor();
 	await admin.locator('.kpi').first().waitFor();
 	check((await admin.locator('.kpi').count()) === 4, 'dashboard shows the 4 headline numbers');
