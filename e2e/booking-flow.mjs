@@ -1,11 +1,15 @@
 // End-to-end browser test of the web app (payments off): browse -> pick seats -> log in -> hold -> confirm
 // -> my bookings -> cancel, plus a second visitor seeing the hold live and a phone-sized layout.
+// With MAILPIT_URL set (app running with EMAIL_PROVIDER=smtp and Mailpit from compose.yaml) it also registers
+// a new account and confirms its email through the link in the real email.
 // Needs the demo data from scripts/seed-demo.ps1. Run with Playwright's Docker image:
 //   docker run --rm --network host -v "${PWD}/e2e:/e2e" -w /e2e -e BASE_URL=http://localhost:8080 \
+//     -e MAILPIT_URL=http://localhost:8025 \
 //     mcr.microsoft.com/playwright:v1.64.1-noble sh -c "npm i --no-save playwright@1.64.1 && node booking-flow.mjs"
 import { chromium, devices } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
+const MAILPIT = process.env.MAILPIT_URL;
 const OUT = process.env.OUT || './screenshots';
 const SHOW = 'Dune: Part Three';
 const problems = [];
@@ -88,6 +92,40 @@ try {
 	});
 	check(seatMapFits, 'the whole seat map (row labels to seat 10) fits the phone screen');
 	await phone.screenshot({ path: `${OUT}/08-phone.png`, fullPage: true });
+
+	if (MAILPIT) {
+		// A new visitor registers, sees the reminder, and confirms through the link in the email
+		const email = `e2e-${Date.now()}@example.com`;
+		const fresh = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+		watchForErrors(fresh, 'new user');
+		await fresh.goto(`${BASE}/`);
+		await fresh.getByRole('button', { name: 'Log in' }).click();
+		await fresh.getByRole('button', { name: 'No account? Register' }).click();
+		await fresh.getByLabel('Name').fill('E2E Tester');
+		await fresh.getByLabel('Email').fill(email);
+		await fresh.getByLabel('Password').fill('E2e-Password-123');
+		await fresh.getByRole('button', { name: 'Register' }).click();
+		await fresh.locator('#verify-banner:not([hidden])').waitFor();
+		check(true, 'a new account sees the "confirm your email" reminder');
+		await fresh.screenshot({ path: `${OUT}/09-verify-banner.png` });
+
+		let link = null;
+		for (let i = 0; i < 40 && !link; i++) {
+			const list = await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`)).json();
+			if (list.messages?.length) {
+				const message = await (await fetch(`${MAILPIT}/api/v1/message/${list.messages[0].ID}`)).json();
+				link = message.Text.match(/https?:\/\/\S+#\/verify\/[A-Za-z0-9_-]+/)?.[0];
+			}
+			if (!link) await new Promise((r) => setTimeout(r, 250));
+		}
+		check(Boolean(link), 'the verification email arrived with a link');
+		const token = link.split('#/verify/')[1];
+		await fresh.goto(link.replace(/^https?:\/\/[^/#]+/, BASE));
+		await fresh.getByRole('heading', { name: 'Email confirmed' }).waitFor();
+		check(await fresh.locator('#verify-banner').isHidden(), 'opening the link confirms the email and hides the reminder');
+		check(!fresh.url().includes(token), 'the one-time token is removed from the address bar');
+		await fresh.screenshot({ path: `${OUT}/10-verified.png` });
+	}
 } catch (error) {
 	// Leave evidence: what the page showed and which messages it gave
 	for (const p of browser.contexts().flatMap((c) => c.pages())) {

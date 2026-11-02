@@ -31,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 		"email.outbox.send-immediately=false", // these tests drive delivery themselves
 		"email.outbox.max-attempts=3",
 		"email.outbox.first-retry-delay=PT30S",
-		"email.outbox.initial-delay=PT1H" // keep the scheduled job out of the way
+		"email.outbox.initial-delay=PT1H", // keep the scheduled job out of the way
+		"email.suppressed-recipients=demo@example.com,nobody@example.com"
 })
 @Import({TestcontainersConfig.class, EmailOutboxTest.FakeEmail.class})
 class EmailOutboxTest {
@@ -168,6 +169,13 @@ class EmailOutboxTest {
 		assertThat(handled).isEqualTo(6);
 		assertThat(sender.calls).hasValue(6);
 		assertThat(sender.sent).extracting(EmailMessage::to).doesNotHaveDuplicates().hasSize(6);
+	}
+
+	@Test
+	void suppressedRecipient_isNeverQueued() {
+		tx.executeWithoutResult(status -> outbox.enqueue("TEST", new EmailMessage("Demo@Example.com", "Hi", "x", "<p>x</p>")));
+
+		assertThat(repository.count()).isZero();
 	}
 
 	@Test

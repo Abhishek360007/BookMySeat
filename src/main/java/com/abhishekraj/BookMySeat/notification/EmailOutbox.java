@@ -10,6 +10,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -39,6 +40,11 @@ public class EmailOutbox {
 	/** MANDATORY: an outbox row only makes sense as part of the transaction that made the change. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void enqueue(String kind, EmailMessage message) {
+		if (properties.suppressedRecipients() != null
+				&& properties.suppressedRecipients().contains(message.to().toLowerCase(Locale.ROOT))) {
+			log.debug("Not emailing suppressed recipient {} ({})", message.to(), kind);
+			return;
+		}
 		OutboxEmail email = repository.save(new OutboxEmail(kind, message, Instant.now(clock)));
 		if (!properties.outbox().sendImmediately()) {
 			return;

@@ -108,6 +108,22 @@ function updateNav() {
 	document.querySelectorAll('[data-auth-only]').forEach((el) => { el.hidden = !loggedIn; });
 	document.getElementById('login-btn').hidden = loggedIn;
 	document.querySelector('.who').textContent = state.user ? state.user.email : '';
+	// Verification is optional: unverified users can still book, they just see this reminder
+	document.getElementById('verify-banner').hidden = !loggedIn || state.user.emailVerified !== false;
+	document.getElementById('verify-email').textContent = state.user ? state.user.email : '';
+}
+
+async function resendVerification() {
+	try {
+		await api('/api/users/me/verification-email', { method: 'POST', auth: true });
+		toast(`Sent. Check ${state.user.email} (and the spam folder).`);
+	} catch (e) {
+		if (e.status === 409) { // verified meanwhile, e.g. in another tab
+			state.user = await api('/api/users/me', { auth: true }).catch(() => state.user);
+			updateNav();
+		}
+		toast(e.message, 'error');
+	}
 }
 
 function every(ms, fn) {
@@ -148,7 +164,7 @@ function requireLogin() {
 				}
 				await login(email, password);
 				finish(true);
-				toast(`Welcome, ${state.user.name}`);
+				toast(register ? `Welcome, ${state.user.name}! We emailed you a link to confirm your address.` : `Welcome, ${state.user.name}`);
 			} catch (e) {
 				error.textContent = e.message;
 				error.hidden = false;
@@ -478,6 +494,28 @@ async function renderBookings() {
 	});
 }
 
+/** Landing page of the link in the verification email: #/verify/<token> */
+async function renderVerify(token) {
+	// Take the one-time token out of the address bar and history (replaceState doesn't trigger a new route)
+	history.replaceState(null, '', '#/verify');
+	app.innerHTML = '<p class="muted">Confirming your email…</p>';
+	try {
+		const result = await api('/api/auth/verify-email', { method: 'POST', body: { token } });
+		if (state.user && state.user.email === result.email) {
+			state.user.emailVerified = true;
+			updateNav();
+		}
+		app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">✓</div>
+			<h1>Email confirmed</h1><p class="muted">${esc(result.email)} is verified. Thanks!</p>
+			<a class="btn btn-primary" href="#/">Find a show</a></div>`;
+	} catch (e) {
+		app.innerHTML = `<div class="card empty"><h1>Link not valid</h1><p class="muted">${esc(e.message)}</p>
+			${state.user && !state.user.emailVerified ? '<button class="btn btn-primary" type="button" id="verify-again">Send a new link</button>' : ''}
+			<a class="btn btn-ghost" href="#/">Back to shows</a></div>`;
+		document.getElementById('verify-again')?.addEventListener('click', resendVerification);
+	}
+}
+
 // ---------- Router and startup ----------
 
 async function route() {
@@ -486,7 +524,10 @@ async function route() {
 	const [path, query = ''] = hash.slice(1).split('?');
 	try {
 		const show = path.match(/^\/show\/(\d+)$/);
+		const verify = path.match(/^\/verify\/([A-Za-z0-9_-]+)$/);
 		if (show) await renderShow(show[1]);
+		else if (verify) await renderVerify(verify[1]);
+		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else if (path === '/bookings') await renderBookings();
 		else await renderHome(new URLSearchParams(query));
 	} catch (e) {
@@ -512,6 +553,7 @@ function loadScript(src) {
 async function start() {
 	document.getElementById('login-btn').onclick = () => requireLogin().then((ok) => ok && route());
 	document.getElementById('logout-btn').onclick = logout;
+	document.getElementById('verify-resend').onclick = resendVerification;
 	try {
 		state.config = await api('/api/config');
 	} catch {
