@@ -145,6 +145,16 @@ class EmailVerificationTest {
 		mvc.perform(post("/api/users/me/verification-email")).andExpect(status().isUnauthorized());
 	}
 
+	@Test
+	void theDemoAccount_countsAsVerified_withoutAnEmail() throws Exception {
+		mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"name\":\"Demo User\",\"email\":\"demo@bookmyseat.dev\",\"password\":\"DemoPass123\"}"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.emailVerified").value(true));
+		Thread.sleep(300);
+		assertThat(sender.sentTo("demo@bookmyseat.dev")).isEmpty();
+	}
+
 	ResultActions verify(String token) throws Exception {
 		return mvc.perform(post("/api/auth/verify-email").contentType(MediaType.APPLICATION_JSON)
 				.content("{\"token\":\"" + token + "\"}"));
