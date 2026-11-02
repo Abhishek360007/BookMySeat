@@ -3,6 +3,8 @@ package com.abhishekraj.BookMySeat.payment;
 import com.abhishekraj.BookMySeat.TestcontainersConfig;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.entity.Role;
+import com.abhishekraj.BookMySeat.notification.OutboxEmail;
+import com.abhishekraj.BookMySeat.notification.OutboxEmailRepository;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
@@ -89,6 +91,7 @@ class PaymentApiTest {
 	@Autowired StringRedisTemplate redis;
 	@Autowired PaymentMaintenanceJob maintenanceJob;
 	@Autowired JdbcTemplate jdbc;
+	@Autowired OutboxEmailRepository outboxRepository;
 
 	String admin;
 	String user;
@@ -107,6 +110,7 @@ class PaymentApiTest {
 
 	@AfterEach
 	void cleanUp() {
+		outboxRepository.deleteAll();
 		paymentRepository.deleteAll();
 		bookingRepository.deleteAll();
 		seatRepository.deleteAll();
@@ -381,6 +385,12 @@ class PaymentApiTest {
 			assertThat(r.amountMinor()).isEqualTo(25000);
 		});
 		assertThat(bookingRepository.count()).isEqualTo(1); // only the other customer's
+		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).singleElement().satisfies(e -> {
+			assertThat(e.getSubject()).isEqualTo("Refund of ₹250.00 for Pay Show");
+			assertThat(e.getBodyText()).contains("no longer available", "rfnd_test_");
+		});
+		assertThat(emails("BOOKING_CONFIRMED", "pay-user1@example.com")).isEmpty();
+		assertThat(emails("BOOKING_CONFIRMED", "pay-user2@example.com")).hasSize(1);
 	}
 
 	@Test
@@ -406,11 +416,13 @@ class PaymentApiTest {
 		gateway.failRefunds = true;
 		webhook("evt_late2", "payment.captured", lateOrder, "pay_late2").andExpect(status().isOk());
 		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUND_PENDING);
+		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).isEmpty(); // not refunded yet
 
 		gateway.failRefunds = false;
 		runMaintenanceJob();
 		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUNDED);
 		assertThat(gateway.refunds).singleElement().satisfies(r -> assertThat(r.paymentId()).isEqualTo("pay_late2"));
+		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).hasSize(1);
 	}
 
 	@Test
@@ -428,9 +440,19 @@ class PaymentApiTest {
 			assertThat(r.paymentId()).isEqualTo("pay_cancel");
 			assertThat(r.amountMinor()).isEqualTo(25000);
 		});
+		assertThat(emails("BOOKING_CONFIRMED", "pay-user1@example.com")).hasSize(1);
+		assertThat(emails("BOOKING_CANCELLED", "pay-user1@example.com")).singleElement()
+				.satisfies(e -> assertThat(e.getBodyText()).contains("Your payment of ₹250.00 is being refunded"));
+		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).singleElement()
+				.satisfies(e -> assertThat(e.getBodyText()).contains("Booking #" + bookingId + " was cancelled"));
 	}
 
 	// ---- helpers ----
+
+	List<OutboxEmail> emails(String kind, String recipient) {
+		return outboxRepository.findAll().stream()
+				.filter(e -> e.getKind().equals(kind) && e.getRecipient().equals(recipient)).toList();
+	}
 
 	/** Moves the checkout deadline into the past and runs the job, as if the payment window ran out. */
 	void expire(String orderId) {

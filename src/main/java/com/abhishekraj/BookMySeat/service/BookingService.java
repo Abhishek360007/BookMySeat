@@ -137,6 +137,7 @@ public class BookingService {
 			}
 		});
 
+		events.publishEvent(new BookingConfirmedEvent(booking.getId())); // e.g. the confirmation email
 		bookingsConfirmed.increment();
 		return BookingResponse.from(booking);
 	}
@@ -167,6 +168,7 @@ public class BookingService {
 				seatHoldService.releaseAll(showId, seatIds, userId);
 			}
 		});
+		events.publishEvent(new BookingConfirmedEvent(booking.getId()));
 		bookingsConfirmed.increment();
 		return Optional.of(booking);
 	}

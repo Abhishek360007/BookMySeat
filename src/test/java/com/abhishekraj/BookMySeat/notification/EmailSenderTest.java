@@ -35,7 +35,7 @@ class EmailSenderTest {
 			.withExposedPorts(1025, 8025);
 
 	static final EmailProperties PROPERTIES = new EmailProperties(EmailProperties.Provider.SMTP,
-			"no-reply@bookmyseat.test", "BookMySeat", new EmailProperties.Brevo("brevo-test-key", "https://brevo.test/v3"), null);
+			"no-reply@bookmyseat.test", "BookMySeat", null, null, new EmailProperties.Brevo("brevo-test-key", "https://brevo.test/v3"), null);
 
 	static final EmailMessage MESSAGE = new EmailMessage("guest@example.com", "Booking confirmed: Dune ₹500",
 			"Seats C5, C6", "<p>Seats <b>C5, C6</b></p>");

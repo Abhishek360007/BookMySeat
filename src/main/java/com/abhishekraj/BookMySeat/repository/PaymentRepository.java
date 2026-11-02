@@ -17,6 +17,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	Optional<Payment> findForUpdateByOrderId(String orderId);
 
+	Optional<Payment> findByOrderId(String orderId);
+
 	Optional<Payment> findByOrderIdAndUserId(String orderId, Long userId);
 
 	Optional<Payment> findFirstByUserIdAndShowIdAndStatusOrderByCreatedAtDesc(Long userId, Long showId, PaymentStatus status);

@@ -3,10 +3,15 @@ package com.abhishekraj.BookMySeat.notification;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.time.ZoneId;
 
-/** email.* settings: which provider delivers emails, the sender shown to recipients, and outbox retries. */
+/**
+ * email.* settings: which provider delivers emails, the sender shown to recipients, and outbox retries.
+ * publicUrl is where links in emails point (the web app); timeZone is how show times are written.
+ */
 @ConfigurationProperties("email")
-public record EmailProperties(Provider provider, String from, String fromName, Brevo brevo, Outbox outbox) {
+public record EmailProperties(Provider provider, String from, String fromName, String publicUrl, ZoneId timeZone,
+		Brevo brevo, Outbox outbox) {
 
 	public enum Provider { LOG, SMTP, BREVO }
 

@@ -4,6 +4,7 @@ import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -26,13 +27,16 @@ public class RefundService {
 	private final PaymentRepository paymentRepository;
 	private final PaymentGateway gateway;
 	private final Clock clock;
+	private final ApplicationEventPublisher events;
 	private final RefundService self;
 
 	// self: calls through the Spring proxy, so refund() really runs in its own transaction
-	public RefundService(PaymentRepository paymentRepository, PaymentGateway gateway, Clock clock, @Lazy RefundService self) {
+	public RefundService(PaymentRepository paymentRepository, PaymentGateway gateway, Clock clock,
+			ApplicationEventPublisher events, @Lazy RefundService self) {
 		this.paymentRepository = paymentRepository;
 		this.gateway = gateway;
 		this.clock = clock;
+		this.events = events;
 		this.self = self;
 	}
 
@@ -64,6 +68,7 @@ public class RefundService {
 		}
 		String refundId = gateway.refund(payment.getPaymentId(), PaymentService.toMinor(payment.getAmount()));
 		payment.refunded(refundId, Instant.now(clock));
+		events.publishEvent(new PaymentRefundedEvent(orderId)); // e.g. the refund email, committed with this change
 		log.info("Order {} refunded: {}", orderId, refundId);
 	}
 

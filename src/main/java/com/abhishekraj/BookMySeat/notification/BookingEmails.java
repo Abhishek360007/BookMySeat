@@ -1,0 +1,46 @@
+package com.abhishekraj.BookMySeat.notification;
+
+import com.abhishekraj.BookMySeat.entity.PaymentStatus;
+import com.abhishekraj.BookMySeat.payment.PaymentRefundedEvent;
+import com.abhishekraj.BookMySeat.repository.BookingRepository;
+import com.abhishekraj.BookMySeat.repository.PaymentRepository;
+import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
+import com.abhishekraj.BookMySeat.service.BookingConfirmedEvent;
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+
+// Plain @EventListener, not @TransactionalEventListener: the email is queued in the same transaction
+// as the booking change, so both commit or neither does (the outbox delivers it after commit)
+@Component
+@RequiredArgsConstructor
+public class BookingEmails {
+
+	private final BookingRepository bookingRepository;
+	private final PaymentRepository paymentRepository;
+	private final EmailTemplates templates;
+	private final EmailOutbox outbox;
+
+	@EventListener
+	public void onConfirmed(BookingConfirmedEvent event) {
+		bookingRepository.findById(event.bookingId())
+				.ifPresent(booking -> outbox.enqueue("BOOKING_CONFIRMED", templates.bookingConfirmed(booking)));
+	}
+
+	@EventListener
+	public void onCancelled(BookingCancelledEvent event) {
+		bookingRepository.findById(event.bookingId()).ifPresent(booking -> {
+			// The refund listener may already have moved the payment on; either way money is going back
+			boolean paid = paymentRepository.findByBookingId(booking.getId())
+					.filter(p -> p.getStatus() == PaymentStatus.REFUND_PENDING || p.getStatus() == PaymentStatus.CONFIRMED)
+					.isPresent();
+			outbox.enqueue("BOOKING_CANCELLED", templates.bookingCancelled(booking, paid));
+		});
+	}
+
+	@EventListener
+	public void onRefunded(PaymentRefundedEvent event) {
+		paymentRepository.findByOrderId(event.orderId())
+				.ifPresent(payment -> outbox.enqueue("PAYMENT_REFUNDED", templates.paymentRefunded(payment)));
+	}
+}
