@@ -34,6 +34,7 @@
 - **Online payments (Razorpay, test mode):** a booking exists only after a verified payment. Late payments, duplicate webhooks and a callback racing the webhook can never double-book or lose money: the customer is either booked or refunded.
 - **Emails through a transactional outbox:** booking confirmed / cancelled / refunded emails and an optional email-verification link are stored in the same transaction as the change, then delivered with retries. A rolled-back booking never sends an email, and a provider outage never loses one.
 - **Admin dashboard:** sales per show in a fixed number of queries, one form for venue + show + seat map, and booking-aware editing: a show with bookings can't change venue, a new time emails every customer, and cancelling a show refunds and emails everyone. A row lock stops a cancel and a payment from overlapping (a test fails without it).
+- **E-tickets with QR check-in:** every booking gets an HMAC-signed ticket code, shown as a QR code in the web app and attached to the confirmation email. Staff scan it at the door with a phone camera; it gets in exactly once, even with 10 scanners reading it at the same moment.
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
 - **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
@@ -167,6 +168,31 @@ Admins get an **Admin** link in the web app (`#/admin`). The admin code is a sep
 
 **Fixed query count:** `GET /api/admin/shows` loads a page of shows, then the seat counts and the sales for all of them with one `GROUP BY` query each, so a page of 20 shows costs the same 4 queries as a page of 1. A test counts the SQL statements with Hibernate statistics.
 
+## E-tickets and check-in
+
+```mermaid
+sequenceDiagram
+    participant C as Customer
+    participant A as App
+    participant D as Door (admin phone)
+    C->>A: book
+    A-->>C: confirmation email + ticket-42.png (QR of T1.42.signature)
+    C->>A: My bookings > Ticket (QR on screen)
+    D->>A: scan: POST /api/admin/check-in {showId, code}
+    A->>A: verify HMAC, then UPDATE ... WHERE checked_in_at IS NULL
+    A-->>D: 200 "Welcome, Tina · A1, A2"  or  409 "Already checked in at 7:02 pm"
+```
+
+| Question | Answer |
+|---|---|
+| What's in the QR? | `T1.<booking id>.<signature>`: the first 128 bits of HMAC-SHA256 over the booking id. Without the server's key nobody can make a code for another booking, so booking ids being guessable doesn't matter |
+| Where does the key come from? | `TICKET_SECRET`, or if that's not set, a key derived from `JWT_SECRET` (so a deployment needs no extra variable). Changing it invalidates every ticket issued |
+| Can a ticket get in twice? | No. The check-in is one conditional `UPDATE ... WHERE checked_in_at IS NULL AND status = 'CONFIRMED'`: 1 row for the first scan, 0 for every later one. `CheckInApiTest` fires 10 scans of one ticket at once: 1 × `200`, 9 × `409` |
+| What else is refused? | A forged or unreadable code (`400`), a cancelled booking, a ticket for another show, or a scan more than 6 hours before or after the start (`409`, with a machine-readable `reason`) |
+| Can a cancellation erase a check-in? | No. The check-in also bumps the booking's `@Version`, so a cancellation that loaded the booking earlier fails its optimistic lock |
+| How does the door scan? | The admin **Check-in** page uses the phone camera through the browser's `BarcodeDetector` (Chrome and Edge on Android); any browser can type the code instead. The result fills the screen in green or red |
+| How does the email get the ticket? | The outbox stores the QR PNG with the email (V13), so a retry sends exactly what was queued with the booking, over SMTP or Brevo |
+
 ## Emails
 
 Booking confirmed, booking cancelled, refund completed, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
@@ -269,6 +295,8 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | GET | `/api/payments/{orderId}` | User | Payment status: `PENDING`, `CONFIRMED`, `EXPIRED`, `REFUND_PENDING`, `REFUNDED` |
 | POST | `/api/payments/webhook` | Razorpay | Server-to-server payment events, authenticated by `X-Razorpay-Signature` |
 | POST | `/api/bookings/{id}/cancel` | User | Cancel, up to 2 hours before the show |
+| GET | `/api/bookings/{id}/ticket`, `/api/bookings/{id}/ticket.png` | User | Your e-ticket: signed code and details, or its QR code image |
+| POST | `/api/admin/check-in` | Admin | Check a ticket in at the door (`showId` + scanned `code`); once only |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
 | GET | `/api/admin/shows/{showId}/bookings?status=&page=&size=&sort=` | Admin | Paginated bookings for a show (default `CONFIRMED`, newest first, max 100 per page) |
 | GET | `/api/admin/shows/{showId}/summary` | Admin | Seats booked / held / available, confirmed bookings, revenue |
@@ -304,6 +332,7 @@ Then open **http://localhost:8080/swagger-ui.html**.
 | `EMAIL_PROVIDER` | `log`, `smtp` (Mailpit: inbox at http://localhost:18025) or `brevo` | `log` |
 | `EMAIL_FROM` / `BREVO_API_KEY` | Sender address (a verified sender in Brevo) and Brevo API key | `no-reply@bookmyseat.dev` / not set |
 | `APP_PUBLIC_URL` | Where links in emails point | `http://localhost:8080` |
+| `TICKET_SECRET` | Key that signs e-ticket codes | Derived from `JWT_SECRET` |
 
 Hold duration and the cancellation cutoff are in [`application.properties`](src/main/resources/application.properties).
 
@@ -320,11 +349,13 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
 | Admin pages | Dashboard, new show form and a page per show for admins (see [Admin dashboard](#admin-dashboard)) |
+| E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned |
+| Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
 | Passwords | "Forgot password?" in the login dialog, a reset page for the emailed link, and an account page (click your email in the top bar) to change the password |
 | Email verification | A reminder banner with **Send it again** until the email is confirmed; the `#/verify/...` page removes the one-time token from the address bar |
 | Phones and dark mode | Responsive down to 360 px wide; follows the system light/dark setting |
 
-**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, and the venue dropdown had no usable accessible name.
+**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
 
 ```powershell
 # app running on port 8080 with the demo data (scripts/seed-demo.ps1)
@@ -429,13 +460,16 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 | HTTP (MockMvc + Testcontainers) | `AdminDashboardApiTest` | Shows with seats sold and revenue, Upcoming / Past / All and title filters, headline numbers, the same SQL statement count for any page size, admin only |
 | HTTP (MockMvc + Testcontainers, fake Razorpay) | `ShowCancellationApiTest` | Cancelling a show refunds and emails everyone and hides it, a payment after the cancel is refunded, 8 payments racing a cancel, venue lock and reschedule emails |
 | HTTP (MockMvc + Testcontainers) | `WebAppTest` | The web app is public; its Content-Security-Policy and other security headers; no inline scripts, styles or event handlers in its files |
+| Unit (milliseconds) | `TicketCodesTest` | Ticket codes verify; another booking's signature, tampering, garbage and other keys are rejected |
+| HTTP (MockMvc + Testcontainers) | `TicketApiTest` | The owner's ticket and a QR that decodes back to the same code; someone else's is 404, a cancelled one 409 |
+| HTTP (MockMvc + Testcontainers) | `CheckInApiTest` | In once, then `ALREADY_CHECKED_IN`; forged codes, other show, cancelled, door window; 10 scanners at once let it in exactly once |
 | HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database and login still works |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V11) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V13) applies to an empty database |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **91% of lines, 77% of branches** across 108 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **91% of lines, 77% of branches** across 122 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -453,6 +487,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 12:** booking emails through a transactional outbox (retries, one sender per email), optional email verification, Brevo in production and Mailpit locally
 - [x] **Week 13:** admin dashboard: sales per show, one-form show setup, booking-aware editing, show cancellation with refunds and emails
 - [x] **Week 14:** password reset and change, Content-Security-Policy and security headers, Dependabot and CodeQL
+- [x] **Week 15:** e-tickets: signed QR codes in the app and the confirmation email, a camera check-in page that lets each ticket in once
 
 ## Author
 

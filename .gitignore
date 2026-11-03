@@ -38,3 +38,6 @@ build/
 
 ### Browser test screenshots ###
 e2e-out/
+
+# JVM crash logs
+hs_err_pid*.log
