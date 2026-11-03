@@ -27,7 +27,7 @@
 - **Optimistic locking (`@Version`):** the database is the final guard. When two confirms race for a seat, exactly one commit wins.
 - **Proven with a 50-thread test:** Testcontainers tests fire 50 concurrent requests at one seat against real PostgreSQL and Redis, and CI runs them on every push.
 - **Flyway-managed schema:** versioned SQL migrations, with Hibernate set to `validate`. CHECK constraints protect prices and totals in the database itself.
-- **Hardened auth:** 15-minute JWT access tokens, rotating refresh tokens with stolen-token (reuse) detection, BCrypt passwords, `USER` / `ADMIN` roles, and per-IP rate limits on login and registration. Errors are RFC 9457 `ProblemDetail` responses.
+- **Hardened auth:** 15-minute JWT access tokens, rotating refresh tokens with stolen-token (reuse) detection, BCrypt passwords, `USER` / `ADMIN` roles, "forgot password" links that log out every session, a strict Content-Security-Policy, and per-IP rate limits on every auth endpoint. Errors are RFC 9457 `ProblemDetail` responses. See [Security](#security).
 - **Online payments (Razorpay, test mode):** a booking exists only after a verified payment. Late payments, duplicate webhooks and a callback racing the webhook can never double-book or lose money: the customer is either booked or refunded.
 - **Emails through a transactional outbox:** booking confirmed / cancelled / refunded emails and an optional email-verification link are stored in the same transaction as the change, then delivered with retries. A rolled-back booking never sends an email, and a provider outage never loses one.
 - **Admin dashboard:** sales per show in a fixed number of queries, one form for venue + show + seat map, and booking-aware editing: a show with bookings can't change venue, a new time emails every customer, and cancelling a show refunds and emails everyone. A row lock stops a cancel and a payment from overlapping (a test fails without it).
@@ -191,6 +191,26 @@ flowchart LR
 
 **Providers:** `EMAIL_PROVIDER=brevo` in production (Brevo's HTTPS API, because Render's free tier blocks outgoing SMTP), `smtp` for local development with [Mailpit](https://mailpit.axllent.org/) from `compose.yaml` (inbox at http://localhost:18025), and `log` by default, which only writes the recipient and subject to the log.
 
+## Security
+
+| Threat | Defence |
+|---|---|
+| Stolen database | Passwords are BCrypt hashes. Refresh tokens, verification links and reset links are random 256-bit values stored only as SHA-256 hashes, so a leaked table holds nothing usable |
+| Stolen refresh token | Rotation with reuse detection: replaying a used token revokes that whole login session |
+| Password guessing | 5 logins per minute per IP; changing the password needs the current one (5 tries per 15 min) |
+| Finding out who has an account | "Forgot password" answers `202` for every address and only emails real accounts |
+| Stolen reset link | Single use, expires after 1 hour, and a newer link cancels older ones. The token is in the URL fragment (`#/reset/...`), which browsers never send to servers, and the page removes it from the address bar |
+| Account taken over through a reset | Every refresh token is revoked and a "your password was changed" email offers a reset. Access tokens are stateless, so one already issued keeps working for at most its remaining 15 minutes; no session can be renewed |
+| The public demo account | Its password can't be changed or reset, and it never receives email |
+| Cross-site scripting | All user text is escaped before it reaches the page, and the Content-Security-Policy only runs scripts from this site and Razorpay Checkout, never inline ones. A test fails if an inline script, style or `on...=` handler appears in the web app |
+| Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
+| Cross-site request forgery | Nothing is authenticated by cookies: the API reads a Bearer token from a header, which another site can't make a browser send |
+| Forged payments and webhooks | HMAC-SHA256 signatures compared in constant time ([Payments](#payments)) |
+| Vulnerable dependencies and code | Dependabot opens weekly update PRs (Maven, GitHub Actions, Docker base images); CodeQL scans the Java and JavaScript on every push and weekly, results under Security > Code scanning |
+| Too much CI power | The workflows run with a read-only `GITHUB_TOKEN` |
+
+Every response also carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` that turns off camera, microphone and location, and HSTS on HTTPS. The Content-Security-Policy was checked against the real Razorpay Checkout in test mode: it needs inline styles (which Razorpay's script injects; they can't run code) and Razorpay's CDN for scripts, and nothing else.
+
 ## Design decisions
 
 **Redis for holds, PostgreSQL for bookings.** Holds are short-lived, so Redis expires them with no cleanup job, and a Lua script makes "check all seats, then hold all" a single atomic step. Confirmed bookings are permanent records, so they live in PostgreSQL, the source of truth.
@@ -228,6 +248,9 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/auth/verify-email` | Public | Confirm an email address with the token from the verification link |
 | GET | `/api/users/me` | User | Current user's profile, including `emailVerified` |
 | POST | `/api/users/me/verification-email` | User | Send a new verification link (earlier links stop working; 3 per hour per IP) |
+| POST | `/api/users/me/password` | User | Change your password (needs the current one); every session is logged out and a new one is returned |
+| POST | `/api/auth/forgot-password` | Public | Email a reset link if the account exists; always `202` (3 per hour per IP) |
+| POST | `/api/auth/reset-password` | Public | Set a new password with the token from the reset link; logs out every session |
 | GET | `/api/venues`, `/api/venues/{id}` | Public | Browse venues |
 | POST / PUT / DELETE | `/api/venues/**` | Admin | Manage venues |
 | GET | `/api/shows?venueId=`, `/api/shows/{id}` | Public | Browse shows and their prices |
@@ -294,10 +317,11 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
 | Admin pages | Dashboard, new show form and a page per show for admins (see [Admin dashboard](#admin-dashboard)) |
+| Passwords | "Forgot password?" in the login dialog, a reset page for the emailed link, and an account page (click your email in the top bar) to change the password |
 | Email verification | A reminder banner with **Send it again** until the email is confirmed; the `#/verify/...` page removes the one-time token from the address bar |
 | Phones and dark mode | Responsive down to 360 px wide; follows the system light/dark setting |
 
-**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. Both fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, and the venue dropdown had no usable accessible name.
+**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, and the venue dropdown had no usable accessible name.
 
 ```powershell
 # app running on port 8080 with the demo data (scripts/seed-demo.ps1)
@@ -395,18 +419,20 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 | HTTP (MockMvc) | `ApiDocsTest` | The OpenAPI document: tags, public endpoints without a lock, documented `Idempotency-Key` |
 | HTTP (MockMvc + Testcontainers, fake Razorpay) | `PaymentApiTest` | Checkout, signatures, idempotent confirm, duplicate and forged webhooks, 10-way callback/webhook race, expiry, late payments, refund retry, refund on cancel |
 | HTTP (MockMvc + Testcontainers, fake email) | `BookingEmailTest` | Booking emails sent right after commit, nothing for a rolled-back booking, HTML escaping, provider outage leaves the email for the job |
+| HTTP (MockMvc + Testcontainers, fake email) | `PasswordResetTest` | Same answer for unknown addresses, single-use expiring links, old sessions revoked, change password needs the current one, demo account protected, rate limit |
 | HTTP (MockMvc + Testcontainers, fake email) | `EmailVerificationTest` | Link sent on registration, only its hash stored, single use, expiry, resend replaces the old link, resend rate limit |
 | Integration (Testcontainers) | `EmailOutboxTest` | Outbox needs a transaction, rollback leaves nothing, backoff and give-up, suppressed recipients, 3 parallel dispatchers send each email once |
 | Integration (Testcontainers: Mailpit) | `EmailSenderTest` | SMTP into a real Mailpit (text + HTML), and the Brevo API request shape and error handling |
 | HTTP (MockMvc + Testcontainers) | `AdminDashboardApiTest` | Shows with seats sold and revenue, Upcoming / Past / All and title filters, headline numbers, the same SQL statement count for any page size, admin only |
 | HTTP (MockMvc + Testcontainers, fake Razorpay) | `ShowCancellationApiTest` | Cancelling a show refunds and emails everyone and hides it, a payment after the cancel is refunded, 8 payments racing a cancel, venue lock and reschedule emails |
+| HTTP (MockMvc + Testcontainers) | `WebAppTest` | The web app is public; its Content-Security-Policy and other security headers; no inline scripts, styles or event handlers in its files |
 | HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database and login still works |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V10) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V11) applies to an empty database |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **90% of lines, 77% of branches** across 96 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **91% of lines, 77% of branches** across 108 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -423,6 +449,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 11:** web app (live seat map, holds with countdown, Razorpay Checkout, my bookings) with a browser end-to-end test
 - [x] **Week 12:** booking emails through a transactional outbox (retries, one sender per email), optional email verification, Brevo in production and Mailpit locally
 - [x] **Week 13:** admin dashboard: sales per show, one-form show setup, booking-aware editing, show cancellation with refunds and emails
+- [x] **Week 14:** password reset and change, Content-Security-Policy and security headers, Dependabot and CodeQL
 
 ## Author
 

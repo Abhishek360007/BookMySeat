@@ -76,7 +76,8 @@ try {
 
 	page.once('dialog', (dialog) => dialog.accept());
 	await page.getByRole('button', { name: 'Cancel' }).first().click();
-	await page.locator('.status', { hasText: 'CANCELLED' }).waitFor();
+	// The newest booking (first card): the demo account may have older cancelled ones
+	await page.locator('.bookings .card').first().locator('.status', { hasText: 'CANCELLED' }).waitFor();
 	check(true, 'cancelling marks the booking CANCELLED');
 	await page.screenshot({ path: `${OUT}/07-cancelled.png` });
 
