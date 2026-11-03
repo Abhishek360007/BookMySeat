@@ -318,7 +318,9 @@ async function renderShow(showId) {
 
 	const draw = () => {
 		const mine = new Set(hold?.seatIds ?? []);
-		document.getElementById('seatmap').innerHTML = rows().map(([row, list]) => `
+		const seatmap = document.getElementById('seatmap');
+		if (!seatmap) return; // a refresh that finished after leaving the page
+		seatmap.innerHTML = rows().map(([row, list]) => `
 			<div class="seat-row">
 				<span class="row-label">${esc(row)}</span>
 				${list.map((seat) => {

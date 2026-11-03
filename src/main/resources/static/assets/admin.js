@@ -312,7 +312,9 @@ export async function renderAdminShow(showId) {
 	let summary = null;
 	const loadSummary = async () => {
 		summary = await api(`/api/admin/shows/${showId}/summary`, { auth: true });
-		document.getElementById('show-kpis').innerHTML = `
+		const kpis = document.getElementById('show-kpis');
+		if (!kpis) return; // left the page while this was loading
+		kpis.innerHTML = `
 			<div class="card kpi"><span class="muted small">Revenue</span><strong>${esc(money.format(summary.revenue))}</strong>
 				<span class="small muted">${summary.confirmedBookings} confirmed booking${summary.confirmedBookings === 1 ? '' : 's'}</span></div>
 			<div class="card kpi"><span class="muted small">Seats sold</span><strong>${summary.booked}/${summary.totalSeats}</strong>
@@ -393,6 +395,7 @@ export async function renderAdminShow(showId) {
 		});
 		const page = await api(`/api/admin/shows/${showId}/bookings?status=${bookingStatus}&page=${bookingPage}&size=10`, { auth: true });
 		const box = document.getElementById('admin-bookings');
+		if (!box) return;
 		if (page.content.length === 0) {
 			box.innerHTML = `<p class="muted">No ${bookingStatus.toLowerCase()} bookings.</p>`;
 			return;
