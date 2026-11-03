@@ -7,10 +7,6 @@ import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
-import com.google.zxing.BinaryBitmap;
-import com.google.zxing.RGBLuminanceSource;
-import com.google.zxing.common.HybridBinarizer;
-import com.google.zxing.qrcode.QRCodeReader;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,9 +19,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -104,7 +97,7 @@ class TicketApiTest {
 				.andExpect(status().isOk())
 				.andExpect(content().contentType(MediaType.IMAGE_PNG))
 				.andReturn().getResponse().getContentAsByteArray();
-		assertThat(decodeQr(png)).isEqualTo(code);
+		assertThat(QrDecoder.decode(png)).isEqualTo(code);
 	}
 
 	@Test
@@ -123,13 +116,6 @@ class TicketApiTest {
 				.andExpect(status().isOk());
 		mvc.perform(get("/api/bookings/" + bookingId + "/ticket").header("Authorization", "Bearer " + user))
 				.andExpect(status().isConflict());
-	}
-
-	static String decodeQr(byte[] png) throws Exception {
-		BufferedImage image = ImageIO.read(new ByteArrayInputStream(png));
-		int[] pixels = image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth());
-		RGBLuminanceSource source = new RGBLuminanceSource(image.getWidth(), image.getHeight(), pixels);
-		return new QRCodeReader().decode(new BinaryBitmap(new HybridBinarizer(source))).getText();
 	}
 
 	long createShowWithSeats() throws Exception {

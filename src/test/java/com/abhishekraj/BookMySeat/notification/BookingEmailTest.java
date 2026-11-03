@@ -7,6 +7,8 @@ import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
+import com.abhishekraj.BookMySeat.ticket.QrDecoder;
+import com.abhishekraj.BookMySeat.ticket.TicketCodes;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,6 +70,7 @@ class BookingEmailTest {
 	@Autowired VenueRepository venueRepository;
 	@Autowired UserRepository userRepository;
 	@Autowired StringRedisTemplate redis;
+	@Autowired TicketCodes ticketCodes;
 
 	String admin;
 	String user;
@@ -117,6 +120,14 @@ class BookingEmailTest {
 			assertThat(e.getKind()).isEqualTo("BOOKING_CONFIRMED");
 			assertThat(e.getStatus()).isEqualTo(OutboxEmail.Status.SENT);
 		});
+
+		// The e-ticket rides along: its QR decodes to this booking's signed ticket code
+		String ticketCode = ticketCodes.codeFor(bookingId);
+		assertThat(email.text()).contains("Ticket code: " + ticketCode);
+		assertThat(email.attachment()).isNotNull();
+		assertThat(email.attachment().filename()).isEqualTo("ticket-" + bookingId + ".png");
+		assertThat(email.attachment().contentType()).isEqualTo("image/png");
+		assertThat(QrDecoder.decode(email.attachment().content())).isEqualTo(ticketCode);
 	}
 
 	@Test

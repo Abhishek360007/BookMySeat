@@ -48,6 +48,14 @@ public class OutboxEmail {
 	@Column(length = 500)
 	private String lastError;
 
+	@Column(length = 100)
+	private String attachmentName;
+
+	@Column(length = 100)
+	private String attachmentType;
+
+	private byte[] attachmentContent;
+
 	@Column(nullable = false)
 	private Instant createdAt;
 
@@ -59,13 +67,20 @@ public class OutboxEmail {
 		this.subject = message.subject();
 		this.bodyText = message.text();
 		this.bodyHtml = message.html();
+		if (message.attachment() != null) {
+			this.attachmentName = message.attachment().filename();
+			this.attachmentType = message.attachment().contentType();
+			this.attachmentContent = message.attachment().content();
+		}
 		this.status = Status.PENDING;
 		this.nextAttemptAt = now;
 		this.createdAt = now;
 	}
 
 	public EmailMessage toMessage() {
-		return new EmailMessage(recipient, subject, bodyText, bodyHtml);
+		EmailMessage.Attachment attachment = attachmentContent == null ? null
+				: new EmailMessage.Attachment(attachmentName, attachmentType, attachmentContent);
+		return new EmailMessage(recipient, subject, bodyText, bodyHtml, attachment);
 	}
 
 	public boolean isDue(Instant now) {

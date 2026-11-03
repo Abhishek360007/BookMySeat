@@ -2,6 +2,7 @@ package com.abhishekraj.BookMySeat.notification;
 
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -29,6 +30,10 @@ public class SmtpEmailSender implements EmailSender {
 			helper.setTo(message.to());
 			helper.setSubject(message.subject());
 			helper.setText(message.text(), message.html()); // multipart/alternative: text and HTML
+			if (message.attachment() != null) {
+				helper.addAttachment(message.attachment().filename(),
+						new ByteArrayResource(message.attachment().content()), message.attachment().contentType());
+			}
 		} catch (MessagingException | UnsupportedEncodingException ex) {
 			throw new MailSendException("Could not build the email", ex);
 		}

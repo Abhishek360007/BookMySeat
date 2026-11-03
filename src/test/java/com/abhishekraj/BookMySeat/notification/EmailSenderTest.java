@@ -61,6 +61,24 @@ class EmailSenderTest {
 	}
 
 	@Test
+	void smtp_carriesTheAttachment() throws Exception {
+		JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
+		mailSender.setHost(mailpit.getHost());
+		mailSender.setPort(mailpit.getMappedPort(1025));
+		byte[] png = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+		EmailMessage withTicket = new EmailMessage("ticket@example.com", "With ticket", "See attached", "<p>See attached</p>",
+				new EmailMessage.Attachment("ticket-7.png", "image/png", png));
+
+		new SmtpEmailSender(mailSender, PROPERTIES).send(withTicket);
+
+		String list = mailpitGet("/api/v1/search?query=" + java.net.URLEncoder.encode("to:ticket@example.com", java.nio.charset.StandardCharsets.UTF_8));
+		String message = mailpitGet("/api/v1/message/" + JsonPath.read(list, "$.messages[0].ID"));
+		assertThat(JsonPath.<String>read(message, "$.Attachments[0].FileName")).isEqualTo("ticket-7.png");
+		assertThat(JsonPath.<String>read(message, "$.Attachments[0].ContentType")).isEqualTo("image/png");
+		assertThat(JsonPath.<Integer>read(message, "$.Attachments[0].Size")).isEqualTo(png.length);
+	}
+
+	@Test
 	void brevo_postsTheEmailWithTheApiKey() {
 		RestClient.Builder builder = RestClient.builder();
 		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -73,9 +91,24 @@ class EmailSenderTest {
 				.andExpect(jsonPath("$.subject").value("Booking confirmed: Dune ₹500"))
 				.andExpect(jsonPath("$.textContent").value("Seats C5, C6"))
 				.andExpect(jsonPath("$.htmlContent").value("<p>Seats <b>C5, C6</b></p>"))
+				.andExpect(jsonPath("$.attachment").doesNotExist())
 				.andRespond(withStatus(HttpStatus.CREATED));
 
 		new BrevoEmailSender(builder, PROPERTIES).send(MESSAGE);
+		server.verify();
+	}
+
+	@Test
+	void brevo_sendsTheAttachmentAsBase64() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		server.expect(requestTo("https://brevo.test/v3/smtp/email"))
+				.andExpect(jsonPath("$.attachment[0].name").value("ticket-7.png"))
+				.andExpect(jsonPath("$.attachment[0].content").value("AQID")) // base64 of bytes 1, 2, 3
+				.andRespond(withStatus(HttpStatus.CREATED));
+
+		new BrevoEmailSender(builder, PROPERTIES).send(new EmailMessage("ticket@example.com", "With ticket", "x", "<p>x</p>",
+				new EmailMessage.Attachment("ticket-7.png", "image/png", new byte[] {1, 2, 3})));
 		server.verify();
 	}
 

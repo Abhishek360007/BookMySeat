@@ -5,6 +5,8 @@ import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.User;
+import com.abhishekraj.BookMySeat.ticket.QrCodes;
+import com.abhishekraj.BookMySeat.ticket.TicketCodes;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
 
@@ -27,9 +29,11 @@ public class EmailTemplates {
 	private static final DateTimeFormatter SHOW_TIME = DateTimeFormatter.ofPattern("EEE d MMM yyyy, h:mm a", Locale.ENGLISH);
 
 	private final EmailProperties properties;
+	private final TicketCodes ticketCodes;
 
-	public EmailTemplates(EmailProperties properties) {
+	public EmailTemplates(EmailProperties properties, TicketCodes ticketCodes) {
 		this.properties = properties;
+		this.ticketCodes = ticketCodes;
 	}
 
 	public EmailMessage verifyEmail(User user, String token, Duration linkLifetime) {
@@ -91,6 +95,7 @@ public class EmailTemplates {
 	public EmailMessage bookingConfirmed(Booking booking) {
 		Show show = booking.getShow();
 		String seats = seats(booking);
+		String ticketCode = ticketCodes.codeFor(booking.getId());
 		String subject = "Booking confirmed: " + show.getTitle();
 		String text = """
 				Hi %s,
@@ -102,9 +107,12 @@ public class EmailTemplates {
 				Seats: %s
 				Total: %s
 
+				Your ticket is attached: show its QR code at the entrance (or open My bookings on your phone).
+				Ticket code: %s
+
 				Your bookings: %s
 				""".formatted(booking.getUser().getName(), booking.getId(), show.getTitle(), when(show.getStartTime()),
-				show.getVenue().getName(), seats, money(booking.getTotalAmount()), bookingsUrl());
+				show.getVenue().getName(), seats, money(booking.getTotalAmount()), ticketCode, bookingsUrl());
 		String html = layout("You're booked!", """
 				<p>Hi %s,</p>
 				<table cellpadding="4" style="border-collapse:collapse">
@@ -115,10 +123,14 @@ public class EmailTemplates {
 				<tr><td style="color:#646779">Seats</td><td><b>%s</b></td></tr>
 				<tr><td style="color:#646779">Total</td><td>%s</td></tr>
 				</table>
+				<p><b>Your ticket is attached.</b> Show its QR code at the entrance, or open My bookings on your phone.<br>
+				<span style="color:#646779">Ticket code: <code>%s</code></span></p>
 				%s""".formatted(esc(booking.getUser().getName()), booking.getId(), esc(show.getTitle()),
 				when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats), money(booking.getTotalAmount()),
-				button("View my bookings", bookingsUrl())));
-		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
+				esc(ticketCode), button("View my bookings", bookingsUrl())));
+		EmailMessage.Attachment ticket = new EmailMessage.Attachment("ticket-" + booking.getId() + ".png", "image/png",
+				QrCodes.png(ticketCode, 360));
+		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, ticket);
 	}
 
 	/** showCancelled: the venue called off the whole show (not the customer cancelling their booking). */
