@@ -672,7 +672,15 @@ async function renderAccount() {
 
 // ---------- Router and startup ----------
 
-async function route() {
+// Pages render one after another. Otherwise a slow page that started earlier (e.g. My bookings still loading)
+// could finish after a quick second click and draw over the page that was asked for last.
+let routing = Promise.resolve();
+function route() {
+	routing = routing.then(renderRoute, renderRoute);
+	return routing;
+}
+
+async function renderRoute() {
 	stopTimers();
 	const hash = location.hash || '#/';
 	const [path, query = ''] = hash.slice(1).split('?');
