@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 
 /**
  * Email verification by single-use link. Optional: an unverified account can still book; the web app
@@ -34,21 +35,29 @@ public class EmailVerificationService {
 	private final EmailTemplates templates;
 	private final Clock clock;
 	private final Duration linkLifetime;
+	private final String demoEmail;
 
 	public EmailVerificationService(EmailVerificationTokenRepository tokenRepository, UserRepository userRepository,
 			EmailOutbox outbox, EmailTemplates templates, Clock clock,
-			@Value("${auth.email-verification.link-lifetime}") Duration linkLifetime) {
+			@Value("${auth.email-verification.link-lifetime}") Duration linkLifetime,
+			@Value("${app.demo.email:}") String demoEmail) {
 		this.tokenRepository = tokenRepository;
 		this.userRepository = userRepository;
 		this.outbox = outbox;
 		this.templates = templates;
 		this.clock = clock;
 		this.linkLifetime = linkLifetime;
+		this.demoEmail = demoEmail.trim().toLowerCase(Locale.ROOT);
 	}
 
 	/** Creates a link and queues the email, in the caller's transaction (registration commits with its email). */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void sendLink(User user) {
+		if (!demoEmail.isEmpty() && demoEmail.equals(user.getEmail())) {
+			// The public demo account's inbox belongs to nobody (no email is ever sent to it): no reminder banner
+			user.setEmailVerifiedAt(Instant.now(clock));
+			return;
+		}
 		tokenRepository.deleteUnusedByUserId(user.getId());
 		String token = Tokens.newToken();
 		Instant now = Instant.now(clock);
