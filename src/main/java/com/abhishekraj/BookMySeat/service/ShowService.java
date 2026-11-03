@@ -7,6 +7,7 @@ import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.entity.Booking;
 import com.abhishekraj.BookMySeat.entity.BookingStatus;
+import com.abhishekraj.BookMySeat.entity.SeatCategory;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
@@ -33,6 +34,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -155,6 +157,16 @@ public class ShowService {
 		show.setStartTime(request.startTime());
 		show.setPrice(request.price());
 		show.setVenue(venue);
+		show.getCategoryPrices().clear();
+		if (request.categoryPrices() != null) {
+			request.categoryPrices().forEach((category, price) -> {
+				if (category != SeatCategory.REGULAR) { // regular seats cost the show's price
+					show.getCategoryPrices().put(category, price);
+				}
+			});
+		}
+		show.setAisleAfter(request.aisleAfter() == null || request.aisleAfter().isEmpty() ? null
+				: request.aisleAfter().stream().distinct().sorted().map(String::valueOf).collect(Collectors.joining(",")));
 	}
 
 	private Show findShow(Long id) {

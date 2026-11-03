@@ -142,6 +142,18 @@ class PaymentApiTest {
 	}
 
 	@Test
+	void checkoutAmount_usesEachSeatsCategoryPrice() throws Exception {
+		jdbc.update("insert into show_category_prices (show_id, category, price) values (?, 'RECLINER', 500.00)", showId);
+		jdbc.update("update seats set category = 'RECLINER' where id = ?", seats.get(1));
+		hold(user, seats.get(0), seats.get(1));
+
+		checkout(user, seats.get(0), seats.get(1))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.amount").value(75000)) // 250 regular + 500 recliner, in paise
+				.andExpect(jsonPath("$.totalAmount").value(750.00));
+	}
+
+	@Test
 	void checkoutRetry_returnsTheSameOpenOrder() throws Exception {
 		hold(user, seats.get(0));
 		String first = JsonPath.read(checkout(user, seats.get(0)).andReturn().getResponse().getContentAsString(), "$.orderId");

@@ -71,7 +71,7 @@ public class PaymentService {
 	public CheckoutResponse checkout(Long userId, ConfirmBookingRequest request) {
 		requireEnabled();
 		Instant now = Instant.now(clock);
-		Show show = showRepository.findById(request.showId())
+		Show show = showRepository.findWithPricesById(request.showId())
 				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + request.showId()));
 		if (show.isCancelled()) {
 			throw new ConflictException("Show " + show.getId() + " has been cancelled");
@@ -103,7 +103,7 @@ public class PaymentService {
 			return toResponse(open);
 		}
 
-		BigDecimal amount = show.getPrice().multiply(BigDecimal.valueOf(seatIds.size()));
+		BigDecimal amount = show.totalFor(seats); // computed here, never sent by the client
 		PaymentGateway.Order order = gateway.createOrder(toMinor(amount), properties.currency(),
 				"bms-" + userId + "-" + now.toEpochMilli());
 		Payment payment = paymentRepository.save(new Payment(userRepository.getReferenceById(userId), show, seatIds,

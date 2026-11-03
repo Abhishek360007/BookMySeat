@@ -3,6 +3,7 @@ package com.abhishekraj.BookMySeat.service;
 import com.abhishekraj.BookMySeat.dto.GenerateSeatsRequest;
 import com.abhishekraj.BookMySeat.dto.SeatResponse;
 import com.abhishekraj.BookMySeat.entity.Seat;
+import com.abhishekraj.BookMySeat.entity.SeatCategory;
 import com.abhishekraj.BookMySeat.entity.SeatStatus;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
@@ -35,10 +36,12 @@ public class SeatService {
 		List<Seat> seats = new ArrayList<>();
 		for (int row = 0; row < request.rows(); row++) {
 			char rowLabel = (char) ('A' + row);
+			SeatCategory category = categoryOfRow(row, request.rows(), request.premium(), request.recliner());
 			for (int number = 1; number <= request.seatsPerRow(); number++) {
 				Seat seat = new Seat();
 				seat.setShow(show);
 				seat.setSeatNumber(rowLabel + String.valueOf(number));
+				seat.setCategory(category);
 				seats.add(seat);
 			}
 		}
@@ -48,7 +51,7 @@ public class SeatService {
 
 	@Transactional(readOnly = true)
 	public List<SeatResponse> getSeats(Long showId) {
-		findShow(showId);
+		Show show = findShow(showId);
 		List<Seat> seats = seatRepository.findByShowIdOrderByIdAsc(showId);
 		Set<Long> held = seatHoldService.findHeldSeatIds(showId, seats.stream().map(Seat::getId).toList());
 
@@ -61,8 +64,17 @@ public class SeatService {
 			} else {
 				status = "AVAILABLE";
 			}
-			return new SeatResponse(seat.getId(), seat.getSeatNumber(), status);
+			return new SeatResponse(seat.getId(), seat.getSeatNumber(), status, seat.getCategory(), show.priceOf(seat.getCategory()));
 		}).toList();
+	}
+
+	/** Counted from the back (row index rows-1): recliners last, premium in front of them. */
+	static SeatCategory categoryOfRow(int row, int rows, int premiumRows, int reclinerRows) {
+		int fromBack = rows - 1 - row;
+		if (fromBack < reclinerRows) {
+			return SeatCategory.RECLINER;
+		}
+		return fromBack < reclinerRows + premiumRows ? SeatCategory.PREMIUM : SeatCategory.REGULAR;
 	}
 
 	private Show findShow(Long showId) {

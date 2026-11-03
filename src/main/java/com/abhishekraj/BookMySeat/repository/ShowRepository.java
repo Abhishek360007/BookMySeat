@@ -34,6 +34,10 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 
 	long countByStatusAndStartTimeAfter(ShowStatus status, Instant now);
 
+	// With its category prices: for pricing outside a transaction (checkout)
+	@EntityGraph(attributePaths = "categoryPrices")
+	Optional<Show> findWithPricesById(Long id);
+
 	// FOR SHARE: many bookings can confirm at once, but a show can't be cancelled in the middle of one
 	@Lock(LockModeType.PESSIMISTIC_READ)
 	@Query("select s from Show s where s.id = :id")

@@ -28,6 +28,10 @@ public class Seat {
 	@Column(nullable = false, length = 20)
 	private SeatStatus status = SeatStatus.AVAILABLE;
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 20)
+	private SeatCategory category = SeatCategory.REGULAR;
+
 	@Version
 	private Long version;
 }

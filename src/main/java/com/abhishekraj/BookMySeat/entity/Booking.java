@@ -66,7 +66,7 @@ public class Booking {
 		this.show = show;
 		this.seats = seats;
 		this.status = BookingStatus.CONFIRMED;
-		this.totalAmount = show.getPrice().multiply(BigDecimal.valueOf(seats.size()));
+		this.totalAmount = show.totalFor(seats); // each seat at its category's price
 		this.createdAt = Instant.now();
 	}
 
