@@ -65,16 +65,18 @@ $show = @(Invoke-Api GET "/api/shows?venueId=$($venue.id)") | Where-Object { $_.
 if ($show) {
 	Write-Host "  show               exists (id $($show.id)), skipped"
 } else {
-	$show = Invoke-Api POST '/api/shows' @{ title = $ShowTitle; startTime = $ShowStart; price = 250.00; venueId = $venue.id } $token
+	# Regular seats 250, premium 350, recliners 500; an aisle down the middle (after seat 5)
+	$show = Invoke-Api POST '/api/shows' @{ title = $ShowTitle; startTime = $ShowStart; price = 250.00; venueId = $venue.id
+		categoryPrices = @{ PREMIUM = 350.00; RECLINER = 500.00 }; aisleAfter = @(5) } $token
 	Write-Host "  show               created (id $($show.id))"
 }
 
-# 4. Seats: 5 rows x 10 = A1-E10
+# 4. Seats: 5 rows x 10 = A1-E10; row D premium, row E (the back) recliners
 $seats = @(Invoke-Api GET "/api/shows/$($show.id)/seats")
 if ($seats.Count -gt 0) {
 	Write-Host "  seats              $($seats.Count) exist, skipped"
 } else {
-	$seats = @(Invoke-Api POST "/api/shows/$($show.id)/seats" @{ rows = 5; seatsPerRow = 10 } $token)
+	$seats = @(Invoke-Api POST "/api/shows/$($show.id)/seats" @{ rows = 5; seatsPerRow = 10; premiumRows = 1; reclinerRows = 1 } $token)
 	Write-Host "  seats              created $($seats.Count)"
 }
 

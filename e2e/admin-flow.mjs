@@ -95,11 +95,33 @@ try {
 	await form.getByLabel('City').fill('Pune');
 	await form.getByLabel('Rows (A–Z)').fill('3');
 	await form.getByLabel('Seats per row').fill('8');
-	check((await admin.locator('#seat-preview').innerText()).startsWith('24 seats: A1 to C8'), 'the form previews the seat map size');
+	// Back row recliners, the row in front of it premium, an aisle after seat 4
+	await form.getByLabel('Premium rows').fill('1');
+	await form.getByLabel('Premium price (₹)').fill('400');
+	await form.getByLabel('Recliner rows').fill('1');
+	await form.getByLabel('Recliner price (₹)').fill('600');
+	await form.getByLabel('Aisles after seat').fill('4');
+	const previewText = await admin.locator('#seat-preview').innerText();
+	check(previewText.startsWith('24 seats: A1 to C8 (8 regular, 8 premium, 8 recliner)') && previewText.includes('₹10,000.00'),
+		`the form previews the seat map and a full house (${previewText})`);
 	await admin.screenshot({ path: `${OUT}/a2-new-show.png` });
 	await admin.getByRole('button', { name: 'Create show' }).click();
 	await admin.waitForURL(/#\/admin\/show\/\d+$/);
 	const showId = Number(admin.url().match(/show\/(\d+)$/)[1]);
+
+	// What a customer sees: categories, prices, aisles, and a total that adds each seat's price
+	const shopper = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+	watchForErrors(shopper, 'shopper');
+	await shopper.goto(`${BASE}/#/show/${showId}`);
+	await shopper.locator('.seat').first().waitFor();
+	check((await shopper.locator('#category-legend').innerText()).includes('Recliner ₹600.00'), 'the legend lists the category prices');
+	check((await shopper.locator('.seat-row').first().locator('.aisle').count()) === 1, 'every row has the aisle after seat 4');
+	check((await shopper.locator('.seat.cat-recliner').count()) === 8, 'the back row is recliners');
+	await shopper.getByRole('button', { name: 'Seat A3, available' }).click();
+	await shopper.getByRole('button', { name: 'Seat C3, available' }).click();
+	check((await shopper.locator('#summary').innerText()).includes('₹850.00'), 'regular ₹250 + recliner ₹600 = ₹850.00 in the summary');
+	await shopper.screenshot({ path: `${OUT}/a2b-categories.png` });
+	await shopper.close();
 	await admin.locator('#admin-seatmap .seat').first().waitFor();
 	check((await admin.locator('#admin-seatmap .seat').count()) === 24, 'the new show has 24 seats');
 
@@ -124,7 +146,7 @@ try {
 	check(current.endsWith('T19:00'), `the form shows the default 7 pm India time (${current})`);
 	const later = new Date(new Date(`${current}:00Z`).getTime() + 3600_000).toISOString().slice(0, 16); // same wall-clock arithmetic
 	await startInput.fill(later);
-	await admin.locator('#edit-show').getByLabel('Price per seat (₹)').fill('300');
+	await admin.locator('#edit-show').getByLabel('Regular price (₹)').fill('300');
 	await admin.getByRole('button', { name: 'Save changes' }).click();
 	await admin.locator('.toast', { hasText: 'customer(s) were emailed the new time' }).waitFor();
 	check(true, 'saving a new time tells the admin the customers were emailed');

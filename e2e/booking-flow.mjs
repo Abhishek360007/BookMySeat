@@ -60,7 +60,7 @@ try {
 	await visitor.goto(page.url());
 	await visitor.locator('.seat').first().waitFor();
 	const c5 = visitor.getByRole('button', { name: /^Seat C5, / });
-	check((await c5.getAttribute('aria-label')).endsWith('held') && await c5.isDisabled(), 'another visitor sees the seats as held');
+	check((await c5.getAttribute('aria-label')).startsWith('Seat C5, held,') && await c5.isDisabled(), 'another visitor sees the seats as held');
 	await visitor.close();
 
 	await page.getByRole('button', { name: /Confirm booking/ }).click();

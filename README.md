@@ -36,6 +36,7 @@
 - **Admin dashboard:** sales per show in a fixed number of queries, one form for venue + show + seat map, and booking-aware editing: a show with bookings can't change venue, a new time emails every customer, and cancelling a show refunds and emails everyone. A row lock stops a cancel and a payment from overlapping (a test fails without it).
 - **E-tickets with QR check-in:** every booking gets an HMAC-signed ticket code, shown as a QR code in the web app and attached to the confirmation email. Staff scan it at the door with a phone camera; it gets in exactly once, even with 10 scanners reading it at the same moment.
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
+- **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
 - **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
 
@@ -152,7 +153,7 @@ Admins get an **Admin** link in the web app (`#/admin`). The admin code is a sep
 | Page | What it does |
 |---|---|
 | Dashboard | Revenue, confirmed bookings (all time and last 7 days), upcoming shows and the share of their seats sold; every show with a sold bar and its revenue; Upcoming / Past / All tabs and a title filter |
-| New show | Pick a venue or create one inline, set the time (India time), price and seat map size (e.g. 5 × 10 = A1–E10) in one form |
+| New show | Pick a venue or create one inline, set the time (India time), prices, seat map size (e.g. 5 × 10 = A1–E10), premium and recliner rows and aisles in one form, with a preview of the full-house takings |
 | Show page | Revenue, seats sold and seats held right now, a seat map refreshed every 10 s, bookings filtered by status, an edit form, and **Cancel show** |
 
 **What happens to customers when a show changes:**
@@ -167,6 +168,19 @@ Admins get an **Admin** link in the web app (`#/admin`). The admin code is a sep
 **Cancel vs. a payment in flight:** confirming a booking takes a shared row lock on the show (`FOR SHARE`, so bookings don't block each other) and cancelling takes an exclusive one (`FOR UPDATE`). Either the booking commits first and the cancel then cancels and refunds it, or the cancel commits first and the payment finds a cancelled show and is refunded. `ShowCancellationApiTest` races 8 payments against a cancel: every customer ends up refunded with no booking left. With the lock removed, the same test leaves confirmed bookings on a cancelled show.
 
 **Fixed query count:** `GET /api/admin/shows` loads a page of shows, then the seat counts and the sales for all of them with one `GROUP BY` query each, so a page of 20 shows costs the same 4 queries as a page of 1. A test counts the SQL statements with Hibernate statistics.
+
+## Seat categories and pricing
+
+Each seat is **Regular**, **Premium** or **Recliner**. A show has a regular price (`price`) and optional prices for the other two; a category without its own price costs the regular one. Rows are counted from the back: generating seats with `premiumRows: 1, reclinerRows: 1` makes the back row recliners and the row in front of it premium. `aisleAfter: [5]` puts an aisle after seat 5 of every row.
+
+| Rule | Why |
+|---|---|
+| The server adds up each seat's category price, for a direct booking and for a Razorpay checkout alike | The client never sends a price (`SeatCategoryApiTest`, `PaymentApiTest`) |
+| A booking stores its total | Changing a price, or which rows are premium (`PUT /api/shows/{id}/seats/layout`), never changes what someone already paid; a checkout in progress keeps its amount |
+| Existing seats became Regular (V14) | Shows created before categories existed cost exactly what they did |
+| Category prices load with the show in checkout | Checkout runs outside a transaction on purpose (the Razorpay call mustn't hold a database connection), so it fetches the prices with the show in one query |
+
+The seat map colours each category's top edge, lists the prices in a legend, leaves a gap at each aisle, and the summary adds the selected seats' prices. Show cards say "from ₹250" when categories cost different amounts.
 
 ## E-tickets and check-in
 
@@ -285,8 +299,9 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | GET | `/api/shows?venueId=`, `/api/shows/{id}` | Public | Browse shows and their prices |
 | GET | `/api/shows/search?city=&q=&from=&to=&page=&size=&sort=` | Public | Search upcoming shows by city, title text and date range (paginated, soonest first) |
 | POST / PUT / DELETE | `/api/shows/**` | Admin | Manage shows (with bookings: the venue is locked and a new time emails the customers) |
-| GET | `/api/shows/{showId}/seats` | Public | Seat map (`AVAILABLE` / `HELD` / `BOOKED`) |
-| POST | `/api/shows/{showId}/seats` | Admin | Generate seats, e.g. 5 rows × 10 = A1–E10 |
+| GET | `/api/shows/{showId}/seats` | Public | Seat map (`AVAILABLE` / `HELD` / `BOOKED`), each seat with its category and price |
+| POST | `/api/shows/{showId}/seats` | Admin | Generate seats, e.g. 5 rows × 10 = A1–E10, with optional `premiumRows` / `reclinerRows` at the back |
+| PUT | `/api/shows/{showId}/seats/layout` | Admin | Change which rows are premium and recliner; existing bookings keep their totals |
 | POST | `/api/bookings/hold` | User | Hold seats for 5 minutes |
 | POST | `/api/bookings/hold/release` | User | Release your holds |
 | POST | `/api/bookings` | User | Confirm held seats (total computed on the server); optional `Idempotency-Key` header for safe retries. Only when payments are off |
@@ -343,7 +358,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Feature | Detail |
 |---|---|
 | Show search | City and title filters on `GET /api/shows/search`, paginated |
-| Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading |
+| Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Safe confirm | Every confirm sends an `Idempotency-Key`, so a double click or a retry can't book twice |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
@@ -429,7 +444,7 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 
 **Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
 
-**Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats, and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
+**Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats (a premium row, a recliner row and a centre aisle), and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
 
 ```powershell
 .\scripts\seed-demo.ps1 -BaseUrl https://bookmyseat-8j1e.onrender.com -AdminEmail <admin> -AdminPassword '<admin password>'
@@ -463,13 +478,14 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 | Unit (milliseconds) | `TicketCodesTest` | Ticket codes verify; another booking's signature, tampering, garbage and other keys are rejected |
 | HTTP (MockMvc + Testcontainers) | `TicketApiTest` | The owner's ticket and a QR that decodes back to the same code; someone else's is 404, a cancelled one 409 |
 | HTTP (MockMvc + Testcontainers) | `CheckInApiTest` | In once, then `ALREADY_CHECKED_IN`; forged codes, other show, cancelled, door window; 10 scanners at once let it in exactly once |
+| HTTP (MockMvc + Testcontainers) | `SeatCategoryApiTest` | Rows from the back become recliners then premium, prices per category, aisles, invalid layouts, totals that add each seat's price and survive price and layout changes |
 | HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database and login still works |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V13) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V14) applies to an empty database |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **91% of lines, 77% of branches** across 122 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 79% of branches** across 128 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -488,6 +504,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 13:** admin dashboard: sales per show, one-form show setup, booking-aware editing, show cancellation with refunds and emails
 - [x] **Week 14:** password reset and change, Content-Security-Policy and security headers, Dependabot and CodeQL
 - [x] **Week 15:** e-tickets: signed QR codes in the app and the confirmation email, a camera check-in page that lets each ticket in once
+- [x] **Week 16:** seat categories (Regular / Premium / Recliner) with their own prices, aisles, per-seat totals that keep their snapshot
 
 ## Author
 
