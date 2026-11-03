@@ -9,12 +9,15 @@
 **Movie ticket booking API that guarantees one booking per seat under concurrent load.**
 
 ### 🚀 [Live demo: book a seat](https://bookmyseat-8j1e.onrender.com/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
+### 🎬 [Watch the 2-minute demo video](https://abhishek360007.github.io/BookMySeat/demo/) (captioned walkthrough, plays instantly)
 
 > Free tier: the first load after a quiet period can take **about 2 minutes** while the app wakes up (if the first page shows an error, refresh it). After that it responds in about a second.
 
 **Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`, or click **Use the demo account** in the app. Pick seats on "Dune: Part Three", hold them and book. Please don't use a real password if you register your own account.
 
 **Paying in the demo (Razorpay test mode, no real money):** after holding seats, click **Pay**, choose **UPI** and enter `success@razorpay`. Use `failure@razorpay` to see a failed payment: the order stays open so you can try again, and the seats are released if nobody pays within the 15-minute payment window.
+
+[![Demo video: picking seats, holding them with a countdown, then booking](docs/demo/demo-preview.gif)](https://abhishek360007.github.io/BookMySeat/demo/)
 
 <p>
   <img src="docs/screenshots/seat-map-held.png" alt="Seat map with two seats held and a countdown" width="68%">
