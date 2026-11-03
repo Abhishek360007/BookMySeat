@@ -152,6 +152,9 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .test-note { margin: 12px 0 0; padding: 10px 14px; border: 1px dashed var(--accent); border-radius: var(--radius); font-size: .9rem; }
 .test-note code { background: var(--seat-free); padding: .05rem .35rem; border-radius: 4px; }
 .narrow { max-width: 420px; }
+.mt { margin-top: 16px; }
+.center { justify-content: center; }
+.w-6 { width: 6rem; }
 
 /* Admin */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0 20px; }

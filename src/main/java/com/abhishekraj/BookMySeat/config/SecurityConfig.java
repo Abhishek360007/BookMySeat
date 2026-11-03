@@ -12,14 +12,53 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
 
 @Configuration
 public class SecurityConfig {
 
+	/**
+	 * Content-Security-Policy for the web app: scripts only from this site and Razorpay Checkout, never inline, and
+	 * no other site may frame these pages (clickjacking). An injected script (XSS) therefore can't run, and data
+	 * can't be sent anywhere but here and Razorpay. Inline styles are allowed only because Razorpay's checkout.js
+	 * injects them (they can't run code); the app's own files have none (WebAppTest checks that).
+	 */
+	static final String CONTENT_SECURITY_POLICY = String.join("; ",
+			"default-src 'self'",
+			"script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com",
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data: https://*.razorpay.com",
+			"connect-src 'self' https://*.razorpay.com",
+			"frame-src https://api.razorpay.com https://checkout.razorpay.com",
+			"font-src 'self'",
+			"object-src 'none'",
+			"base-uri 'none'",
+			"form-action 'self'",
+			"frame-ancestors 'none'");
+
+	static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), usb=()";
+
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 		http
+			// No cookies: the API authenticates with a Bearer header, which another site can't make a browser send
 			.csrf(csrf -> csrf.disable())
+			.headers(headers -> headers
+				// Spring's defaults stay on: X-Content-Type-Options: nosniff, X-Frame-Options: DENY, HSTS on HTTPS,
+				// Cache-Control: no-store
+				.referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+				.addHeaderWriter(new StaticHeadersWriter("Permissions-Policy", PERMISSIONS_POLICY))
+				// Swagger UI ships inline styles and scripts, so the policy covers everything but the docs
+				.addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
+						new NegatedRequestMatcher(new OrRequestMatcher(
+								PathPatternRequestMatcher.withDefaults().matcher("/swagger-ui/**"),
+								PathPatternRequestMatcher.withDefaults().matcher("/swagger-ui.html"))),
+						new StaticHeadersWriter("Content-Security-Policy", CONTENT_SECURITY_POLICY))))
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers("/api/auth/**").permitAll()

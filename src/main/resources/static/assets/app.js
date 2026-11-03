@@ -459,7 +459,7 @@ function showSuccess(seatNumbers, amount, bookingId) {
 			<div class="big">🎟️</div>
 			<h2>You're booked!</h2>
 			<p>Seats <strong>${esc(seatNumbers.join(', '))}</strong> · ${esc(money.format(amount))} · booking #${esc(bookingId)}</p>
-			<div class="row" style="justify-content:center">
+			<div class="row center">
 				<a class="btn btn-primary" href="#/bookings">My bookings</a>
 				<a class="btn btn-ghost" href="#/">More shows</a>
 			</div>
@@ -609,7 +609,7 @@ async function renderAccount() {
 			<p><strong>${esc(user.name)}</strong><br><span class="muted">${esc(user.email)}</span>
 				· ${user.emailVerified ? 'email confirmed' : 'email not confirmed yet'}</p>
 		</div>
-		<div class="card narrow" style="margin-top:16px">
+		<div class="card narrow mt">
 			<h2>Change password</h2>
 			<form class="auth-form" id="password-form" novalidate>
 				<label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
