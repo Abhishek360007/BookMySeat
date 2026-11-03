@@ -16,6 +16,16 @@ const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR
 const when = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const CATEGORIES = ['REGULAR', 'PREMIUM', 'RECLINER'];
+const CATEGORY_NAMES = { REGULAR: 'regular', PREMIUM: 'premium', RECLINER: 'recliner' };
+
+/** "₹250" or, when seat categories cost different amounts, "from ₹250" */
+function priceLabel(show) {
+	const prices = Object.values(show.prices ?? {}).map(Number);
+	const lowest = prices.length ? Math.min(...prices) : Number(show.price);
+	return prices.some((p) => p !== lowest) ? `from ${money.format(lowest)}` : money.format(show.price);
+}
+
 // crypto.randomUUID() only exists on secure origins (HTTPS or localhost); getRandomValues works everywhere
 function uuid() {
 	if (crypto.randomUUID) return crypto.randomUUID();
@@ -234,7 +244,7 @@ async function renderHome(params) {
 					<span class="title">${esc(show.title)}</span>
 					<span class="muted">${esc(show.venueName)}</span>
 					<span>${esc(when.format(new Date(show.startTime)))}</span>
-					<span class="price">${esc(money.format(show.price))}</span>
+					<span class="price">${esc(priceLabel(show))}</span>
 				</a>`).join('')}
 		</div>
 		<div class="row spread pager">
@@ -264,7 +274,7 @@ async function renderShow(showId) {
 	app.innerHTML = `
 		<a href="#/" class="small">← All shows</a>
 		<h1>${esc(show.title)}</h1>
-		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(money.format(show.price))} per seat</p>
+		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · <span id="seat-prices"></span></p>
 		<div class="card">
 			<div class="screen">SCREEN</div>
 			<div class="seatmap" id="seatmap"></div>
@@ -272,6 +282,7 @@ async function renderShow(showId) {
 				<span><i class="l-free"></i>Available</span><span><i class="l-sel"></i>Your selection</span>
 				<span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span>
 			</div>
+			<div class="legend" id="category-legend"></div>
 		</div>
 		<div class="card summary" id="summary"></div>
 		${testModeNote()}`;
@@ -287,7 +298,23 @@ async function renderShow(showId) {
 			.map(([row, list]) => [row, list.sort((a, b) => a.num - b.num)]);
 	};
 
-	const total = (count) => money.format(show.price * count);
+	// Each seat at its own category's price (the server computes the real total the same way)
+	const priceOf = (id) => Number(seats.find((s) => s.id === id)?.price ?? show.price);
+	const total = (ids) => money.format([...ids].reduce((sum, id) => sum + priceOf(id), 0));
+	const aisles = new Set(show.aisleAfter ?? []);
+	const usedCategories = () => CATEGORIES.filter((c) => seats.some((s) => (s.category ?? 'REGULAR') === c));
+	const seatLabel = (seat, state) => `Seat ${seat.seatNumber}, ${state}, ${seat.category && seat.category !== 'REGULAR'
+		? `${CATEGORY_NAMES[seat.category]} ` : ''}${money.format(seat.price ?? show.price)}`;
+
+	const drawPrices = () => {
+		const used = usedCategories();
+		document.getElementById('seat-prices').textContent = used.length > 1
+			? used.map((c) => `${CATEGORY_NAMES[c]} ${money.format(show.prices?.[c] ?? show.price)}`).join(' · ')
+			: `${money.format(show.price)} per seat`;
+		document.getElementById('category-legend').innerHTML = used.length > 1
+			? used.map((c) => `<span><i class="l-cat cat-${c.toLowerCase()}"></i>${esc(CATEGORY_NAMES[c][0].toUpperCase() + CATEGORY_NAMES[c].slice(1))} ${esc(money.format(show.prices?.[c] ?? show.price))}</span>`).join('')
+			: '';
+	};
 
 	const draw = () => {
 		const mine = new Set(hold?.seatIds ?? []);
@@ -298,14 +325,15 @@ async function renderShow(showId) {
 					const isMine = mine.has(seat.id);
 					const cls = isMine ? 'mine' : selected.has(seat.id) ? 'selected' : seat.status.toLowerCase();
 					const disabled = hold || (seat.status !== 'AVAILABLE' && !isMine);
-					return `<button class="seat ${cls}" data-id="${seat.id}" ${disabled ? 'disabled' : ''}
-						aria-pressed="${selected.has(seat.id)}" aria-label="Seat ${esc(seat.seatNumber)}, ${isMine ? 'held by you' : seat.status.toLowerCase()}">${seat.num}</button>`;
+					return `<button class="seat ${cls} cat-${(seat.category ?? 'REGULAR').toLowerCase()}" data-id="${seat.id}" ${disabled ? 'disabled' : ''}
+						aria-pressed="${selected.has(seat.id)}" aria-label="${esc(seatLabel(seat, isMine ? 'held by you' : seat.status.toLowerCase()))}">${seat.num}</button>${aisles.has(seat.num) ? '<span class="aisle"></span>' : ''}`;
 				}).join('')}
 			</div>`).join('');
 
+		drawPrices();
 		const summary = document.getElementById('summary');
 		if (hold) {
-			const action = state.config.paymentsEnabled ? `Pay ${total(hold.seatIds.length)}` : `Confirm booking · ${total(hold.seatIds.length)}`;
+			const action = state.config.paymentsEnabled ? `Pay ${total(hold.seatIds)}` : `Confirm booking · ${total(hold.seatIds)}`;
 			summary.innerHTML = `
 				<div><strong>${hold.seatNumbers.join(', ')}</strong> held for you · <span class="timer" id="timer"></span></div>
 				<div class="row">
@@ -318,7 +346,7 @@ async function renderShow(showId) {
 		} else {
 			const count = selected.size;
 			summary.innerHTML = `
-				<div>${count ? `<strong>${count} seat${count > 1 ? 's' : ''}</strong> · ${total(count)}` : '<span class="muted">Pick up to 10 seats</span>'}</div>
+				<div>${count ? `<strong>${count} seat${count > 1 ? 's' : ''}</strong> · ${total(selected)}` : '<span class="muted">Pick up to 10 seats</span>'}</div>
 				<button class="btn btn-primary" id="hold" ${count === 0 || busy ? 'disabled' : ''}>Hold seats</button>`;
 			document.getElementById('hold').onclick = holdSeats;
 		}

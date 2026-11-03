@@ -116,6 +116,15 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible { outline: 2px soli
 	width: 2.25rem; height: 2.25rem; border-radius: 8px 8px 4px 4px; font: inherit; font-size: .72rem; cursor: pointer;
 	background: var(--seat-free); border: 1px solid var(--seat-free-border); color: var(--text);
 }
+/* Seat categories: the seat's outline and a bar on its top edge say which one it is */
+.seat.cat-premium { border-color: #d4a017; box-shadow: inset 0 3px 0 #d4a017; }
+.seat.cat-recliner { border-color: #b4549a; box-shadow: inset 0 3px 0 #b4549a; border-radius: 10px 10px 4px 4px; }
+.seat.booked.cat-premium, .seat.booked.cat-recliner { box-shadow: none; }
+.aisle { display: inline-block; width: 14px; flex: none; }
+.legend .l-cat { background: var(--seat-free); }
+.legend .l-cat.cat-regular { border-color: var(--seat-free-border); }
+.legend .l-cat.cat-premium { border-color: #d4a017; box-shadow: inset 0 3px 0 #d4a017; }
+.legend .l-cat.cat-recliner { border-color: #b4549a; box-shadow: inset 0 3px 0 #b4549a; }
 .seat:hover:not(:disabled) { border-color: var(--accent); }
 .seat.held { background: var(--seat-held); border-color: var(--seat-held-border); cursor: not-allowed; }
 .seat.booked { background: var(--seat-booked); border-color: var(--seat-booked); color: var(--seat-booked-text); cursor: not-allowed; }
