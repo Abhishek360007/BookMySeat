@@ -3,6 +3,7 @@ package com.abhishekraj.BookMySeat.service;
 import com.abhishekraj.BookMySeat.entity.PasswordResetToken;
 import com.abhishekraj.BookMySeat.entity.User;
 import com.abhishekraj.BookMySeat.exception.InvalidResetLinkException;
+import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.notification.EmailOutbox;
 import com.abhishekraj.BookMySeat.notification.EmailTemplates;
 import com.abhishekraj.BookMySeat.repository.PasswordResetTokenRepository;
@@ -11,9 +12,11 @@ import com.abhishekraj.BookMySeat.security.RefreshTokenService;
 import com.abhishekraj.BookMySeat.security.Tokens;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -97,6 +100,24 @@ public class PasswordResetService {
 		int revoked = refreshTokenService.revokeAllSessions(user.getId());
 		outbox.enqueue("PASSWORD_CHANGED", templates.passwordChanged(user, now));
 		log.info("Password changed for user {}; {} session token(s) revoked", user.getId(), revoked);
+	}
+
+	/**
+	 * Logged-in change: needs the current password (a stolen access token alone isn't enough). Logs out every
+	 * session, including this one; the caller hands this device a fresh session.
+	 */
+	@Transactional
+	public User changePassword(Long userId, String currentPassword, String newPassword) {
+		User user = userRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User not found"));
+		if (isDemo(user)) {
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "The demo account's password can't be changed");
+		}
+		if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+			// 400, not 401: the access token is fine, only the typed password is wrong
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Your current password is incorrect");
+		}
+		changePassword(user, newPassword, Instant.now(clock));
+		return user;
 	}
 
 	boolean isDemo(User user) {

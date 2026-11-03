@@ -29,6 +29,7 @@ public class AuthService {
 	private final JwtService jwtService;
 	private final RefreshTokenService refreshTokenService;
 	private final EmailVerificationService emailVerification;
+	private final PasswordResetService passwordReset;
 
 	@Transactional
 	public UserResponse register(RegisterRequest request) {
@@ -74,6 +75,13 @@ public class AuthService {
 	private LoginResponse tokens(User user, String refreshToken) {
 		return new LoginResponse(jwtService.generateToken(user), "Bearer", jwtService.getExpirationSeconds(),
 				refreshToken, refreshTokenService.getLifetimeSeconds());
+	}
+
+	/** Changes the password (every session ends) and starts a new session for the device that asked. */
+	@Transactional
+	public LoginResponse changePassword(Long userId, String currentPassword, String newPassword) {
+		User user = passwordReset.changePassword(userId, currentPassword, newPassword);
+		return tokens(user, refreshTokenService.issue(user));
 	}
 
 	@Transactional(readOnly = true)
