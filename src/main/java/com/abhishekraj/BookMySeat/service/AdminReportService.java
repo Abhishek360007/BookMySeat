@@ -46,7 +46,8 @@ public class AdminReportService {
 
 		return new ShowSummaryResponse(showId, seats.size(), booked, held, seats.size() - booked - held,
 				bookingRepository.countByShowIdAndStatus(showId, BookingStatus.CONFIRMED),
-				bookingRepository.sumTotal(showId, BookingStatus.CONFIRMED).setScale(2)); // 0 -> 0.00 when nothing is booked
+				bookingRepository.sumTotal(showId, BookingStatus.CONFIRMED).setScale(2), // 0 -> 0.00 when nothing is booked
+				bookingRepository.countByShowIdAndStatusAndCheckedInAtIsNotNull(showId, BookingStatus.CONFIRMED));
 	}
 
 	private void requireShow(Long showId) {

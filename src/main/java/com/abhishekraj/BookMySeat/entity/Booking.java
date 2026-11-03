@@ -48,6 +48,10 @@ public class Booking {
 
 	private Instant cancelledAt;
 
+	private Instant checkedInAt; // set once, by CheckInService, when the ticket is scanned at the door
+
+	private Long checkedInBy; // the admin who scanned it
+
 	@Version
 	private Long version;
 

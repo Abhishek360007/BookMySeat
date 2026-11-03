@@ -130,6 +130,26 @@ public class GlobalExceptionHandler {
 		return problem;
 	}
 
+	@ExceptionHandler(InvalidTicketException.class)
+	public ProblemDetail handleInvalidTicket(InvalidTicketException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+		problem.setTitle("Invalid ticket");
+		problem.setProperty("reason", "INVALID");
+		return problem;
+	}
+
+	// A real ticket that can't come in: the scanner shows the reason in big letters
+	@ExceptionHandler(CheckInRefusedException.class)
+	public ProblemDetail handleCheckInRefused(CheckInRefusedException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setTitle("Not checked in");
+		problem.setProperty("reason", ex.getReason().name());
+		if (ex.getCheckedInAt() != null) {
+			problem.setProperty("checkedInAt", ex.getCheckedInAt().toString());
+		}
+		return problem;
+	}
+
 	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
 	public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Invalid value for parameter '" + ex.getName() + "'");

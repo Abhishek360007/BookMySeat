@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.math.BigDecimal;
@@ -32,6 +33,17 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 	BigDecimal sumTotal(Long showId, BookingStatus status);
 
 	long countByShowIdAndStatus(Long showId, BookingStatus status);
+
+	long countByShowIdAndStatusAndCheckedInAtIsNotNull(Long showId, BookingStatus status);
+
+	// Atomic check-in: 1 row for the first scan, 0 for any later or concurrent one. The version bump makes a
+	// cancellation that loaded the booking earlier fail its optimistic lock instead of overwriting the check-in.
+	@Modifying
+	@Query("""
+			update Booking b set b.checkedInAt = :now, b.checkedInBy = :staffUserId, b.version = b.version + 1
+			where b.id = :bookingId and b.checkedInAt is null
+			  and b.status = com.abhishekraj.BookMySeat.entity.BookingStatus.CONFIRMED""")
+	int markCheckedIn(Long bookingId, Instant now, Long staffUserId);
 
 	// Every booking of a show (to cancel or notify them all); the seats come in batched IN (...) queries
 	@EntityGraph(attributePaths = {"user"})
