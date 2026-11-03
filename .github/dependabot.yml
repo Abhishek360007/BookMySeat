@@ -1,0 +1,23 @@
+# Weekly pull requests for outdated or vulnerable dependencies. CI tests each one before it can be merged.
+# Minor and patch updates are grouped into one PR per ecosystem to keep the noise down.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+  # Base images in the Dockerfile (eclipse-temurin)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
