@@ -72,6 +72,12 @@ public class RefreshTokenService {
 				.ifPresent(token -> repository.revokeFamily(token.getFamilyId(), Instant.now(clock)));
 	}
 
+	/** Logs the user out everywhere: no refresh token of theirs works any more. */
+	@Transactional
+	public int revokeAllSessions(Long userId) {
+		return repository.revokeAllForUser(userId, Instant.now(clock));
+	}
+
 	public long getLifetimeSeconds() {
 		return lifetime.toSeconds();
 	}

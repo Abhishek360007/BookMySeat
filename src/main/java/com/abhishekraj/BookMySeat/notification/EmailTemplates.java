@@ -52,6 +52,42 @@ public class EmailTemplates {
 		return new EmailMessage(user.getEmail(), "Confirm your email for BookMySeat", text, html);
 	}
 
+	public EmailMessage passwordReset(User user, String token, Duration linkLifetime) {
+		String link = url("reset/" + token); // in the URL fragment, like the verification link
+		String text = """
+				Hi %s,
+
+				Someone (hopefully you) asked to reset the password of your BookMySeat account.
+				Choose a new password here:
+				%s
+
+				The link works once and expires in %d minutes. If you didn't ask for this, ignore this email: your password stays the same.
+				""".formatted(user.getName(), link, linkLifetime.toMinutes());
+		String html = layout("Reset your password", """
+				<p>Hi %s,</p>
+				<p>Someone (hopefully you) asked to reset the password of your BookMySeat account.</p>
+				%s
+				<p style="color:#646779">The link works once and expires in %d minutes. If you didn't ask for this, ignore this email: your password stays the same.</p>"""
+				.formatted(esc(user.getName()), button("Choose a new password", link), linkLifetime.toMinutes()));
+		return new EmailMessage(user.getEmail(), "Reset your BookMySeat password", text, html);
+	}
+
+	public EmailMessage passwordChanged(User user, Instant when) {
+		String text = """
+				Hi %s,
+
+				The password of your BookMySeat account was changed on %s, and every device was logged out.
+
+				If this wasn't you, reset your password now: %s
+				""".formatted(user.getName(), when(when), url("forgot"));
+		String html = layout("Your password was changed", """
+				<p>Hi %s,</p>
+				<p>The password of your BookMySeat account was changed on %s, and every device was logged out.</p>
+				<p>If this wasn't you, reset your password now.</p>
+				%s""".formatted(esc(user.getName()), when(when), button("Reset my password", url("forgot"))));
+		return new EmailMessage(user.getEmail(), "Your BookMySeat password was changed", text, html);
+	}
+
 	public EmailMessage bookingConfirmed(Booking booking) {
 		Show show = booking.getShow();
 		String seats = seats(booking);
