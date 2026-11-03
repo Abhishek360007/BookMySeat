@@ -136,6 +136,30 @@ class SeatCategoryApiTest {
 				.andExpect(jsonPath("$[?(@.id==" + bookingId + ")].totalAmount", contains(1100.00)));
 	}
 
+	@Test
+	void changingTheLayoutLater_keepsWhatEarlierBookingsCost() throws Exception {
+		long showId = createShow("{\"RECLINER\":500.00}", null);
+		adminCall(post("/api/shows/" + showId + "/seats"), "{\"rows\":3,\"seatsPerRow\":4}").andExpect(status().isCreated());
+		String user = registerAndLogin();
+		String seats = mvc.perform(get("/api/shows/" + showId + "/seats")).andReturn().getResponse().getContentAsString();
+		book(user, showId, seatId(seats, "C1")).andExpect(jsonPath("$.totalAmount").value(250.00)); // regular then
+
+		adminCall(put("/api/shows/" + showId + "/seats/layout"), "{\"premiumRows\":0,\"reclinerRows\":1}")
+				.andExpect(status().isOk());
+		String after = mvc.perform(get("/api/shows/" + showId + "/seats")).andReturn().getResponse().getContentAsString();
+		org.assertj.core.api.Assertions.assertThat(JsonPath.<List<String>>read(after, "$[?(@.seatNumber=='C2')].category"))
+				.containsExactly("RECLINER");
+		book(user, showId, seatId(after, "C2")).andExpect(jsonPath("$.totalAmount").value(500.00));
+		mvc.perform(get("/api/bookings/me").header("Authorization", "Bearer " + user))
+				.andExpect(jsonPath("$[?(@.seats[0]=='C1')].totalAmount", contains(250.00))); // unchanged
+
+		adminCall(put("/api/shows/" + showId + "/seats/layout"), "{\"premiumRows\":2,\"reclinerRows\":2}")
+				.andExpect(status().isBadRequest());
+		mvc.perform(put("/api/shows/" + showId + "/seats/layout").header("Authorization", "Bearer " + user)
+						.contentType(MediaType.APPLICATION_JSON).content("{\"premiumRows\":1,\"reclinerRows\":0}"))
+				.andExpect(status().isForbidden());
+	}
+
 	// ---- helpers ----
 
 	static int seatId(String seatsJson, String seatNumber) {

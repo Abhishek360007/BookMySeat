@@ -116,6 +116,28 @@ export function fromLocalInput(value) {
 	return new Date(`${value}:00+05:30`).toISOString();
 }
 
+/** "4, 8" -> [4, 8]; empty -> [] */
+function parseAisles(text) {
+	return String(text || '').split(/[\s,]+/).filter(Boolean).map(Number);
+}
+
+/** The optional premium / recliner prices of a form; a blank one means "same as regular". */
+function categoryPricesOf(f) {
+	const prices = {};
+	if (f.premiumPrice !== '') prices.PREMIUM = Number(f.premiumPrice);
+	if (f.reclinerPrice !== '') prices.RECLINER = Number(f.reclinerPrice);
+	return prices;
+}
+
+const CATEGORY_NAMES = { REGULAR: 'regular', PREMIUM: 'premium', RECLINER: 'recliner' };
+
+/** "₹250 regular · ₹350 premium" for the categories this show's seats use */
+function pricesText(show, categories) {
+	return Object.entries(show.prices ?? { REGULAR: show.price })
+		.filter(([c]) => !categories || categories.has(c))
+		.map(([c, p]) => `${money.format(p)} ${CATEGORY_NAMES[c]}`).join(' · ');
+}
+
 export function venueOptions(venues, selectedId) {
 	return venues.map((v) => `<option value="${v.id}" ${v.id === selectedId ? 'selected' : ''}>${esc(v.name)}${v.city ? ` (${esc(v.city)})` : ''}</option>`).join('');
 }
@@ -142,12 +164,24 @@ export async function renderNewShow() {
 			</fieldset>
 			<div class="form-row">
 				<label>Starts (India time) <input name="startTime" type="datetime-local" required value="${toLocalInput(tomorrow)}"></label>
-				<label>Price per seat (₹) <input name="price" type="number" min="0" step="0.01" required value="250"></label>
+				<label>Regular price (₹) <input name="price" type="number" min="0" step="0.01" required value="250"></label>
 			</div>
 			<div class="form-row">
 				<label>Rows (A–Z) <input name="rows" type="number" min="1" max="26" required value="5"></label>
 				<label>Seats per row <input name="seatsPerRow" type="number" min="1" max="30" required value="10"></label>
 			</div>
+			<fieldset>
+				<legend>Seat categories (rows at the back; optional)</legend>
+				<div class="form-row">
+					<label>Premium rows <input name="premiumRows" type="number" min="0" max="26" value="0"></label>
+					<label>Premium price (₹) <input name="premiumPrice" type="number" min="0" step="0.01" placeholder="same as regular"></label>
+				</div>
+				<div class="form-row">
+					<label>Recliner rows <input name="reclinerRows" type="number" min="0" max="26" value="0"></label>
+					<label>Recliner price (₹) <input name="reclinerPrice" type="number" min="0" step="0.01" placeholder="same as regular"></label>
+				</div>
+			</fieldset>
+			<label>Aisles after seat <input name="aisles" placeholder="e.g. 4, 8 (optional)" inputmode="numeric"></label>
 			<p class="muted small" id="seat-preview"></p>
 			<p class="form-error" id="new-show-error" role="alert" hidden></p>
 			<div class="row"><button class="btn btn-primary" id="create-show">Create show</button><a class="btn btn-ghost" href="#/admin">Cancel</a></div>
@@ -156,10 +190,17 @@ export async function renderNewShow() {
 	const form = document.getElementById('new-show');
 	const error = document.getElementById('new-show-error');
 	const preview = () => {
-		const rows = Number(form.rows.value), per = Number(form.seatsPerRow.value);
+		const rows = Number(form.rows.value), per = Number(form.seatsPerRow.value) || 0;
+		const recliner = Number(form.reclinerRows.value) || 0, premium = Number(form.premiumRows.value) || 0;
+		const regular = Math.max(rows - premium - recliner, 0);
+		const price = Number(form.price.value || 0);
+		const priceOf = (input) => (input.value === '' ? price : Number(input.value));
+		const full = per * (regular * price + premium * priceOf(form.premiumPrice) + recliner * priceOf(form.reclinerPrice));
 		const last = rows >= 1 && rows <= 26 ? String.fromCharCode(64 + rows) : '?';
-		document.getElementById('seat-preview').textContent =
-			`${rows * per || 0} seats: A1 to ${last}${per || '?'} · ${money.format((rows * per || 0) * Number(form.price.value || 0))} if every seat sells`;
+		const parts = [`${regular * per} regular`, premium && `${premium * per} premium`, recliner && `${recliner * per} recliner`].filter(Boolean);
+		document.getElementById('seat-preview').textContent = premium + recliner > rows
+			? 'More premium and recliner rows than rows'
+			: `${rows * per || 0} seats: A1 to ${last}${per || '?'} (${parts.join(', ')}) · ${money.format(full)} if every seat sells`;
 	};
 	form.venueId.onchange = () => { document.getElementById('new-venue').hidden = form.venueId.value !== 'new'; };
 	form.oninput = preview;
@@ -181,10 +222,12 @@ export async function renderNewShow() {
 			}
 			if (!f.startTime) throw new Error('Pick a start time');
 			const show = await api('/api/shows', { method: 'POST', auth: true,
-				body: { title: f.title.trim(), startTime: fromLocalInput(f.startTime), price: Number(f.price), venueId } });
+				body: { title: f.title.trim(), startTime: fromLocalInput(f.startTime), price: Number(f.price), venueId,
+					categoryPrices: categoryPricesOf(f), aisleAfter: parseAisles(f.aisles) } });
 			showId = show.id;
 			await api(`/api/shows/${showId}/seats`, { method: 'POST', auth: true,
-				body: { rows: Number(f.rows), seatsPerRow: Number(f.seatsPerRow) } });
+				body: { rows: Number(f.rows), seatsPerRow: Number(f.seatsPerRow),
+					premiumRows: Number(f.premiumRows) || 0, reclinerRows: Number(f.reclinerRows) || 0 } });
 			toast(`Created "${show.title}" with ${Number(f.rows) * Number(f.seatsPerRow)} seats`);
 			location.hash = `#/admin/show/${showId}`;
 		} catch (e) {
@@ -211,7 +254,7 @@ export async function renderAdminShow(showId) {
 		<a href="#/admin" class="small">← Admin</a>
 		<div class="row spread">
 			<div><h1>${esc(show.title)} ${statusBadge(show.status)}</h1>
-				<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(money.format(show.price))} per seat
+				<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · <span id="show-prices">${esc(pricesText(show))}</span>
 				· <a href="#/show/${show.id}">customer view</a></p></div>
 			${cancelled ? '' : `<a class="btn btn-primary" href="#/admin/check-in?show=${show.id}">Check-in</a>`}
 		</div>
@@ -236,13 +279,29 @@ export async function renderAdminShow(showId) {
 				<label>Title <input name="title" required maxlength="150" value="${esc(show.title)}"></label>
 				<div class="form-row">
 					<label>Starts (India time) <input name="startTime" type="datetime-local" required value="${toLocalInput(show.startTime)}"></label>
-					<label>Price per seat (₹) <input name="price" type="number" min="0" step="0.01" required value="${show.price}"></label>
+					<label>Regular price (₹) <input name="price" type="number" min="0" step="0.01" required value="${show.price}"></label>
 				</div>
+				<div class="form-row">
+					<label>Premium price (₹) <input name="premiumPrice" type="number" min="0" step="0.01" placeholder="same as regular"
+						value="${show.prices && show.prices.PREMIUM !== show.price ? show.prices.PREMIUM : ''}"></label>
+					<label>Recliner price (₹) <input name="reclinerPrice" type="number" min="0" step="0.01" placeholder="same as regular"
+						value="${show.prices && show.prices.RECLINER !== show.price ? show.prices.RECLINER : ''}"></label>
+				</div>
+				<label>Aisles after seat <input name="aisles" placeholder="e.g. 4, 8 (optional)" value="${esc((show.aisleAfter ?? []).join(', '))}"></label>
 				<div class="field"><label for="edit-venue">Venue</label><select name="venueId" id="edit-venue">${venueOptions(venues, show.venueId)}</select></div>
 				<p class="muted small" id="edit-hint"></p>
 				<p class="form-error" id="edit-error" role="alert" hidden></p>
 				<div class="row"><button class="btn btn-primary" id="save-show">Save changes</button></div>
 			</form>
+		</div>
+		<div class="card mt" id="layout-card" hidden>
+				<h2>Seat categories</h2>
+				<form class="row" id="layout-form">
+					<label>Premium rows <input name="premiumRows" type="number" min="0" max="26" class="w-6"></label>
+					<label>Recliner rows <input name="reclinerRows" type="number" min="0" max="26" class="w-6"></label>
+					<button class="btn btn-ghost">Apply</button>
+				</form>
+				<p class="muted small">Counted from the back row. Existing bookings keep what they paid; new bookings use the new layout.</p>
 		</div>
 		<div class="card danger-zone mt">
 			<h2>Cancel show</h2>
@@ -300,11 +359,31 @@ export async function renderAdminShow(showId) {
 			if (!byRow.has(row)) byRow.set(row, []);
 			byRow.get(row).push({ ...seat, num: Number(num) });
 		}
-		map.innerHTML = [...byRow.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([row, list]) => `
+		const aisles = new Set(show.aisleAfter ?? []);
+		const rows = [...byRow.entries()].sort(([a], [b]) => a.localeCompare(b));
+		map.innerHTML = rows.map(([row, list]) => `
 			<div class="seat-row"><span class="row-label">${esc(row)}</span>
-				${list.sort((a, b) => a.num - b.num).map((s) => `<span class="seat ${s.status.toLowerCase()} static"
-					role="img" aria-label="Seat ${esc(s.seatNumber)}, ${s.status.toLowerCase()}">${s.num}</span>`).join('')}
+				${list.sort((a, b) => a.num - b.num).map((s) => `<span class="seat ${s.status.toLowerCase()} cat-${s.category.toLowerCase()} static"
+					role="img" aria-label="Seat ${esc(s.seatNumber)}, ${CATEGORY_NAMES[s.category]}, ${s.status.toLowerCase()}">${s.num}</span>${aisles.has(s.num) ? '<span class="aisle"></span>' : ''}`).join('')}
 			</div>`).join('');
+		document.getElementById('show-prices').textContent = pricesText(show, new Set(seats.map((s) => s.category)));
+		const layout = document.getElementById('layout-form');
+		if (layout && !layout.dataset.ready) {
+			const rowsOf = (category) => rows.filter(([, list]) => list[0].category === category).length;
+			layout.premiumRows.value = rowsOf('PREMIUM');
+			layout.reclinerRows.value = rowsOf('RECLINER');
+			layout.dataset.ready = 'yes';
+			document.getElementById('layout-card').hidden = false;
+			layout.onsubmit = async (event) => {
+				event.preventDefault();
+				try {
+					await api(`/api/shows/${showId}/seats/layout`, { method: 'PUT', auth: true,
+						body: { premiumRows: Number(layout.premiumRows.value) || 0, reclinerRows: Number(layout.reclinerRows.value) || 0 } });
+					toast('Seat categories updated');
+					await loadSeats();
+				} catch (e) { toast(e.message, 'error'); }
+			};
+		}
 	};
 
 	const loadBookings = async () => {
@@ -352,7 +431,8 @@ export async function renderAdminShow(showId) {
 			const moved = new Date(startTime).getTime() !== new Date(show.startTime).getTime();
 			try {
 				await api(`/api/shows/${showId}`, { method: 'PUT', auth: true, body: {
-					title: f.title.trim(), startTime, price: Number(f.price), venueId: Number(f.venueId ?? show.venueId) } });
+					title: f.title.trim(), startTime, price: Number(f.price), venueId: Number(f.venueId ?? show.venueId),
+					categoryPrices: categoryPricesOf(f), aisleAfter: parseAisles(f.aisles) } });
 				toast(moved && summary?.confirmedBookings ? `Saved. ${summary.confirmedBookings} customer(s) were emailed the new time.` : 'Saved');
 				renderAdminShow(showId);
 			} catch (e) {

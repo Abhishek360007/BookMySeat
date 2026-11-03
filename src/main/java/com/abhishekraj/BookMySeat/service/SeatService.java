@@ -2,6 +2,8 @@ package com.abhishekraj.BookMySeat.service;
 
 import com.abhishekraj.BookMySeat.dto.GenerateSeatsRequest;
 import com.abhishekraj.BookMySeat.dto.SeatResponse;
+import com.abhishekraj.BookMySeat.config.CacheConfig;
+import com.abhishekraj.BookMySeat.dto.SeatLayoutRequest;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.SeatCategory;
 import com.abhishekraj.BookMySeat.entity.SeatStatus;
@@ -11,6 +13,9 @@ import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -66,6 +71,37 @@ public class SeatService {
 			}
 			return new SeatResponse(seat.getId(), seat.getSeatNumber(), status, seat.getCategory(), show.priceOf(seat.getCategory()));
 		}).toList();
+	}
+
+	/**
+	 * Re-assigns rows to categories on an existing seat map. Safe at any time: bookings keep the total they were
+	 * made with, and a checkout in progress keeps the amount it is paying. New holds use the new prices.
+	 */
+	@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#showId")
+	@Transactional
+	public List<SeatResponse> applyLayout(Long showId, SeatLayoutRequest request) {
+		Show show = findShow(showId);
+		if (show.isCancelled()) {
+			throw new ConflictException("Show " + showId + " is cancelled");
+		}
+		List<Seat> seats = seatRepository.findByShowIdOrderByIdAsc(showId);
+		List<String> rows = seats.stream().map(seat -> rowOf(seat.getSeatNumber())).distinct().sorted().toList();
+		if (rows.isEmpty()) {
+			throw new ConflictException("Show " + showId + " has no seats yet");
+		}
+		if (request.premiumRows() + request.reclinerRows() > rows.size()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+					"premiumRows + reclinerRows can't be more than the " + rows.size() + " rows of this show");
+		}
+		for (Seat seat : seats) {
+			int row = rows.indexOf(rowOf(seat.getSeatNumber()));
+			seat.setCategory(categoryOfRow(row, rows.size(), request.premiumRows(), request.reclinerRows()));
+		}
+		return getSeats(showId);
+	}
+
+	private static String rowOf(String seatNumber) {
+		return seatNumber.replaceAll("\\d+$", "");
 	}
 
 	/** Counted from the back (row index rows-1): recliners last, premium in front of them. */
