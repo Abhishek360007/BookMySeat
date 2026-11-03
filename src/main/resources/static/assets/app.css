@@ -143,6 +143,7 @@ dialog { border: 1px solid var(--border); border-radius: var(--radius); backgrou
 dialog::backdrop { background: rgb(0 0 0 / .45); }
 .auth-form { display: grid; gap: .75rem; }
 .auth-form label { display: grid; gap: .25rem; font-size: .9rem; }
+.auth-form label[hidden] { display: none; }
 .form-error { color: var(--danger); margin: 0; font-size: .9rem; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 50; max-width: min(92vw, 360px); }
 .toast { background: var(--text); color: var(--bg); padding: .65rem .9rem; border-radius: 10px; box-shadow: 0 6px 24px rgb(0 0 0 / .2); font-size: .9rem; }
