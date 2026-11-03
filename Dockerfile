@@ -1,5 +1,5 @@
 # ---- build ----
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:25-jdk AS build
 WORKDIR /app
 # pom.xml and dependencies first: a code change doesn't re-download all of Maven
 COPY .mvn .mvn
@@ -13,7 +13,7 @@ RUN ./mvnw -B -q package -DskipTests \
  && mv extracted/application/*.jar extracted/application/app.jar
 
 # ---- run ----
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 RUN useradd --system --uid 1001 app
 WORKDIR /app
 # Least-changing layers first, so a code change only rebuilds the small application layer
