@@ -486,7 +486,9 @@ async function renderBookings() {
 						<div class="muted small">${esc(b.venueName)} · ${esc(when.format(new Date(b.showStartTime)))}</div>
 						<div>Seats ${esc(b.seats.join(', '))} · <span class="price">${esc(money.format(b.totalAmount))}</span></div>
 					</div>
-					${b.status === 'CONFIRMED' ? `<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button>` : ''}
+					${b.status === 'CONFIRMED' ? `<div class="row">
+						<a class="btn btn-primary" href="#/ticket/${b.id}">Ticket</a>
+						<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button></div>` : ''}
 				</div>`).join('')}
 		</div>`;
 	app.querySelectorAll('[data-cancel]').forEach((button) => {
@@ -501,6 +503,32 @@ async function renderBookings() {
 			}
 		};
 	});
+}
+
+/** #/ticket/<bookingId>: the e-ticket to show at the entrance. */
+async function renderTicket(bookingId) {
+	if (!(await requireLogin())) {
+		location.hash = '#/';
+		return;
+	}
+	const ticket = await api(`/api/bookings/${bookingId}/ticket`, { auth: true });
+	// The QR image needs the login token, so it's fetched and shown from memory (a blob: URL)
+	const res = await fetch(`/api/bookings/${bookingId}/ticket.png`, { headers: { Authorization: `Bearer ${state.accessToken}` } });
+	if (!res.ok) throw new ApiError(res.status, 'Could not load the ticket');
+	const qr = URL.createObjectURL(await res.blob());
+	app.innerHTML = `
+		<a href="#/bookings" class="small">← My bookings</a>
+		<div class="card ticket">
+			<p class="muted small">BookMySeat e-ticket · booking #${ticket.bookingId}</p>
+			<h1>${esc(ticket.showTitle)}</h1>
+			<p>${esc(ticket.venueName)} · ${esc(when.format(new Date(ticket.showStartTime)))}</p>
+			<img class="qr" src="${qr}" alt="Ticket QR code for booking ${ticket.bookingId}" width="260" height="260">
+			<p class="seats">Seats <strong>${esc(ticket.seats.join(', '))}</strong></p>
+			<p class="muted small">${esc(ticket.holderName)} · <code>${esc(ticket.code)}</code></p>
+			${ticket.checkedInAt
+				? `<p class="status CONFIRMED">CHECKED IN ${esc(when.format(new Date(ticket.checkedInAt)))}</p>`
+				: '<p class="muted">Show this QR code at the entrance. Turn your screen brightness up.</p>'}
+		</div>`;
 }
 
 /** Landing page of the link in the verification email: #/verify/<token> */
@@ -651,6 +679,7 @@ async function route() {
 	try {
 		const show = path.match(/^\/show\/(\d+)$/);
 		const verify = path.match(/^\/verify\/([A-Za-z0-9_-]+)$/);
+		const ticket = path.match(/^\/ticket\/(\d+)$/);
 		const reset = path.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
 		const adminShow = path.match(/^\/admin\/show\/(\d+)$/);
 		if (path === '/admin' || path.startsWith('/admin/')) {
@@ -658,12 +687,14 @@ async function route() {
 			const admin = await import('./admin.js');
 			if (adminShow) await admin.renderAdminShow(adminShow[1]);
 			else if (path === '/admin/new') await admin.renderNewShow();
+			else if (path === '/admin/check-in') await admin.renderCheckIn(new URLSearchParams(query));
 			else await admin.renderAdmin(new URLSearchParams(query));
 		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);
 		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else if (path === '/bookings') await renderBookings();
 		else if (path === '/account') await renderAccount();
+		else if (ticket) await renderTicket(ticket[1]);
 		else if (path === '/forgot') renderForgot();
 		else if (reset) renderReset(reset[1]);
 		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
@@ -708,4 +739,4 @@ async function start() {
 start();
 
 // Shared with the admin pages (assets/admin.js)
-export { api, app, esc, money, when, toast, state, every };
+export { api, app, esc, money, when, toast, state, every, ApiError };

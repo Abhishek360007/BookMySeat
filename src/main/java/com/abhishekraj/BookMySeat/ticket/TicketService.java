@@ -35,7 +35,7 @@ public class TicketService {
 		return new TicketResponse(booking.getId(), codes.codeFor(booking.getId()), booking.getShow().getTitle(),
 				booking.getShow().getVenue().getName(), booking.getShow().getStartTime(),
 				booking.getSeats().stream().sorted(Comparator.comparing(Seat::getId)).map(Seat::getSeatNumber).toList(),
-				booking.getUser().getName());
+				booking.getUser().getName(), booking.getCheckedInAt());
 	}
 
 	public byte[] qrPng(TicketResponse ticket) {

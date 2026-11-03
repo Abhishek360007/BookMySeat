@@ -64,14 +64,14 @@ public class CheckInService {
 		Instant now = Instant.now(clock);
 
 		if (!show.getId().equals(showId)) {
-			throw refused(Reason.OTHER_SHOW, "This ticket is for " + show.getTitle() + " at " + TIME.format(show.getStartTime())
+			throw refused(Reason.OTHER_SHOW, "This ticket is for " + show.getTitle() + " at " + time(show.getStartTime())
 					+ ", not this show", null);
 		}
 		if (booking.getStatus() != BookingStatus.CONFIRMED) {
 			throw refused(Reason.CANCELLED, "This booking was cancelled", null);
 		}
 		if (booking.getCheckedInAt() != null) {
-			throw refused(Reason.ALREADY_CHECKED_IN, "Already checked in at " + TIME.format(booking.getCheckedInAt()),
+			throw refused(Reason.ALREADY_CHECKED_IN, "Already checked in at " + time(booking.getCheckedInAt()),
 					booking.getCheckedInAt());
 		}
 		if (now.isBefore(show.getStartTime().minus(opensBefore))) {
@@ -87,7 +87,7 @@ public class CheckInService {
 			if (booking.getStatus() != BookingStatus.CONFIRMED) {
 				throw refused(Reason.CANCELLED, "This booking was cancelled", null);
 			}
-			throw refused(Reason.ALREADY_CHECKED_IN, "Already checked in at " + TIME.format(booking.getCheckedInAt()),
+			throw refused(Reason.ALREADY_CHECKED_IN, "Already checked in at " + time(booking.getCheckedInAt()),
 					booking.getCheckedInAt());
 		}
 		meterRegistry.counter("checkins", "result", "ok").increment();
@@ -95,6 +95,11 @@ public class CheckInService {
 		return new CheckInResponse(bookingId, booking.getUser().getName(),
 				booking.getSeats().stream().sorted(Comparator.comparing(Seat::getId)).map(Seat::getSeatNumber).toList(),
 				show.getTitle(), now);
+	}
+
+	// "7:02 pm, 3 Nov": India time, written like the rest of the site
+	private static String time(Instant instant) {
+		return TIME.format(instant).replace("AM", "am").replace("PM", "pm");
 	}
 
 	private InvalidTicketException refusedInvalid() {

@@ -32,7 +32,7 @@ public class SecurityConfig {
 			"default-src 'self'",
 			"script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com",
 			"style-src 'self' 'unsafe-inline'",
-			"img-src 'self' data: https://*.razorpay.com",
+			"img-src 'self' data: blob: https://*.razorpay.com", // blob: the e-ticket QR, fetched with the user's token
 			"connect-src 'self' https://*.razorpay.com",
 			"frame-src https://api.razorpay.com https://checkout.razorpay.com",
 			"font-src 'self'",
@@ -41,7 +41,8 @@ public class SecurityConfig {
 			"form-action 'self'",
 			"frame-ancestors 'none'");
 
-	static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), usb=()";
+	// camera=(self): the admin check-in page scans tickets; no other site embedded here may use it
+	static final String PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), usb=()";
 
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {

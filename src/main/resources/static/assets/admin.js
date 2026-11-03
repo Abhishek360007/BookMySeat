@@ -213,6 +213,7 @@ export async function renderAdminShow(showId) {
 			<div><h1>${esc(show.title)} ${statusBadge(show.status)}</h1>
 				<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(money.format(show.price))} per seat
 				· <a href="#/show/${show.id}">customer view</a></p></div>
+			${cancelled ? '' : `<a class="btn btn-primary" href="#/admin/check-in?show=${show.id}">Check-in</a>`}
 		</div>
 		<div class="kpis" id="show-kpis"></div>
 		<div class="card">
@@ -258,7 +259,9 @@ export async function renderAdminShow(showId) {
 			<div class="card kpi"><span class="muted small">Seats sold</span><strong>${summary.booked}/${summary.totalSeats}</strong>
 				<span class="small muted">${pct(summary.booked, summary.totalSeats)}% of the house</span></div>
 			<div class="card kpi"><span class="muted small">Held right now</span><strong>${summary.held}</strong>
-				<span class="small muted">${summary.available} available</span></div>`;
+				<span class="small muted">${summary.available} available</span></div>
+			<div class="card kpi"><span class="muted small">Checked in</span><strong>${summary.checkedInBookings}/${summary.confirmedBookings}</strong>
+				<span class="small muted">bookings at the door</span></div>`;
 		const hint = document.getElementById('edit-hint');
 		if (hint) {
 			const booked = summary.confirmedBookings > 0;
@@ -317,9 +320,11 @@ export async function renderAdminShow(showId) {
 		}
 		box.innerHTML = `
 			<div class="table-wrap"><table class="table">
-				<thead><tr><th>#</th><th>Customer</th><th>Seats</th><th>Booked</th><th class="num">Amount</th></tr></thead>
+				<thead><tr><th>#</th><th>Customer</th><th>Seats</th><th>Booked</th><th>Checked in</th><th class="num">Amount</th></tr></thead>
 				<tbody>${page.content.map((b) => `<tr><td>${b.id}</td><td>${esc(b.userEmail)}</td><td>${esc(b.seats.join(', '))}</td>
-					<td class="small">${esc(when.format(new Date(b.createdAt)))}</td><td class="num">${esc(money.format(b.totalAmount))}</td></tr>`).join('')}
+					<td class="small">${esc(when.format(new Date(b.createdAt)))}</td>
+					<td class="small">${b.checkedInAt ? esc(when.format(new Date(b.checkedInAt))) : '<span class="muted">–</span>'}</td>
+					<td class="num">${esc(money.format(b.totalAmount))}</td></tr>`).join('')}
 				</tbody></table></div>
 			<div class="row spread pager">
 				<button class="btn btn-ghost" id="b-prev" ${bookingPage === 0 ? 'disabled' : ''}>Previous</button>
@@ -378,4 +383,95 @@ export async function renderAdminShow(showId) {
 			}
 		};
 	}
+}
+
+// ---------- #/admin/check-in?show=:id ----------
+
+/**
+ * The door: scans ticket QR codes with the phone camera (BarcodeDetector, in Chrome and Edge) or takes a typed
+ * code. The server decides; this page only shows the answer big enough to read at arm's length.
+ */
+export async function renderCheckIn(params) {
+	if (!requireAdmin()) return;
+	const now = Date.now();
+	// Shows whose doors could be open: from 6 hours before the start to 6 hours after
+	const recent = (await api('/api/admin/shows?when=ALL&size=100&sort=startTime,desc', { auth: true })).content
+		.filter((s) => s.status !== 'CANCELLED' && Math.abs(new Date(s.startTime).getTime() - now) <= 12 * 3600_000);
+	let showId = Number(params.get('show')) || recent[0]?.id;
+
+	app.innerHTML = `
+		<a href="#/admin" class="small">← Admin</a>
+		<h1>Check-in</h1>
+		<div class="card admin-form narrow">
+			<div class="field"><label for="checkin-show">Show</label>
+				<select id="checkin-show">${recent.map((s) => `<option value="${s.id}" ${s.id === showId ? 'selected' : ''}>${esc(s.title)} · ${esc(when.format(new Date(s.startTime)))}</option>`).join('')
+					|| '<option value="">No show starts within 12 hours</option>'}</select></div>
+			<p class="muted small" id="checkin-count"></p>
+		</div>
+		<div class="checkin-result" id="checkin-result" role="status" aria-live="assertive"></div>
+		<div class="card narrow mt">
+			<div id="scanner"></div>
+			<form class="row" id="checkin-form">
+				<input name="code" placeholder="Or type the ticket code (T1.…)" aria-label="Ticket code" autocomplete="off">
+				<button class="btn btn-primary">Check in</button>
+			</form>
+		</div>`;
+
+	const select = document.getElementById('checkin-show');
+	const result = document.getElementById('checkin-result');
+	const count = async () => {
+		if (!showId) return;
+		const s = await api(`/api/admin/shows/${showId}/summary`, { auth: true });
+		document.getElementById('checkin-count').textContent = `${s.checkedInBookings} of ${s.confirmedBookings} bookings checked in`;
+	};
+	select.onchange = () => { showId = Number(select.value); history.replaceState(null, '', `#/admin/check-in?show=${showId}`); count(); };
+
+	let busy = false;
+	const check = async (code) => {
+		if (busy || !showId || !code.trim()) return;
+		busy = true;
+		try {
+			const ok = await api('/api/admin/check-in', { method: 'POST', auth: true, body: { showId, code: code.trim() } });
+			result.className = 'checkin-result ok';
+			result.innerHTML = `<strong>✓ Welcome, ${esc(ok.holderName)}</strong><span>Seats ${esc(ok.seats.join(', '))}</span>`;
+			count();
+		} catch (e) {
+			result.className = 'checkin-result bad';
+			result.innerHTML = `<strong>✗ Not checked in</strong><span>${esc(e.message)}</span>`;
+		} finally {
+			setTimeout(() => { busy = false; }, 1500); // one scan of one ticket, not five
+		}
+	};
+	const form = document.getElementById('checkin-form');
+	form.onsubmit = (event) => { event.preventDefault(); check(form.code.value); form.reset(); };
+	await count();
+	every(10_000, () => count().catch(() => {}));
+
+	const scanner = document.getElementById('scanner');
+	if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) {
+		scanner.innerHTML = '<p class="muted small">This browser can\'t scan QR codes; type the code instead (Chrome or Edge on Android can scan).</p>';
+		return;
+	}
+	scanner.innerHTML = '<button class="btn btn-ghost" type="button" id="start-camera">Scan with camera</button>';
+	document.getElementById('start-camera').onclick = async () => {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+			scanner.innerHTML = '<video id="camera" class="camera" playsinline muted></video>';
+			const video = document.getElementById('camera');
+			video.srcObject = stream;
+			await video.play();
+			const detector = new BarcodeDetector({ formats: ['qr_code'] });
+			const timer = setInterval(async () => {
+				if (!document.body.contains(video)) { // left the page
+					clearInterval(timer);
+					stream.getTracks().forEach((t) => t.stop());
+					return;
+				}
+				const codes = await detector.detect(video).catch(() => []);
+				if (codes.length) check(codes[0].rawValue);
+			}, 300);
+		} catch (e) {
+			scanner.innerHTML = `<p class="form-error">Camera unavailable: ${esc(e.message)}. Type the code instead.</p>`;
+		}
+	};
 }

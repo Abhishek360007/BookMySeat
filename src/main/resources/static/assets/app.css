@@ -157,6 +157,12 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .center { justify-content: center; }
 .w-6 { width: 6rem; }
 
+/* E-ticket */
+.ticket { max-width: 380px; margin: 12px auto 0; text-align: center; }
+.ticket .qr { display: block; margin: 12px auto; width: 260px; height: 260px; background: #fff; padding: 8px; border-radius: 8px; image-rendering: pixelated; }
+.ticket .seats { font-size: 1.1rem; }
+.ticket code { word-break: break-all; }
+
 /* Admin */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0 20px; }
 .kpi { display: grid; gap: 2px; }
@@ -180,6 +186,13 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .link-tab { border: 0; background: none; font: inherit; cursor: pointer; }
 .seat.static { display: inline-grid; place-items: center; cursor: default; }
 .danger-zone { border-color: var(--danger); }
+.checkin-result { max-width: 420px; margin-top: 16px; border-radius: var(--radius); padding: 0; display: grid; gap: 4px; text-align: center; }
+.checkin-result:empty { display: none; }
+.checkin-result.ok, .checkin-result.bad { padding: 18px; color: #fff; }
+.checkin-result.ok { background: #13795b; }
+.checkin-result.bad { background: #c0392b; }
+.checkin-result strong { font-size: 1.5rem; }
+.camera { width: 100%; max-height: 320px; border-radius: 8px; background: #000; margin-bottom: 10px; }
 .card h2 { font-size: 1.1rem; }
 .admin-form { display: grid; gap: .9rem; max-width: 560px; }
 .admin-form label { display: grid; gap: .25rem; font-size: .9rem; }

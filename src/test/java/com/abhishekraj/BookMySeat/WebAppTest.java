@@ -74,7 +74,7 @@ class WebAppTest {
 				.andExpect(header().string("X-Frame-Options", "DENY"))
 				.andExpect(header().string("X-Content-Type-Options", "nosniff"))
 				.andExpect(header().string("Referrer-Policy", "strict-origin-when-cross-origin"))
-				.andExpect(header().string("Permissions-Policy", containsString("camera=()")));
+				.andExpect(header().string("Permissions-Policy", allOf(containsString("camera=(self)"), containsString("microphone=()"))));
 	}
 
 	@Test
