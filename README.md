@@ -1,7 +1,7 @@
 # BookMySeat 🎟️
 
 [![CI](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml)
-![Java](https://img.shields.io/badge/Java-25-orange)
+![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white)
@@ -39,7 +39,7 @@
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
 - **Observability with OpenTelemetry:** metrics and traces go to Grafana Cloud over OTLP. A dashboard and alert rules live in the repo as files, and the alerts are unit-tested with `promtool` in CI. Every log line carries the request id and the trace id, and business counters only move once their transaction commits. See [Monitoring](#monitoring).
-- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a Java 25 AOT cache that starts it about twice as fast as without one.
+- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
 
 ## Architecture
 
@@ -324,7 +324,7 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 
 ## Run locally
 
-**Prerequisites:** Java 25 and Docker Desktop (running). Spring Boot starts PostgreSQL, Redis and Mailpit from `compose.yaml`, and Flyway creates the schema on first start.
+**Prerequisites:** Java 21 and Docker Desktop (running). Spring Boot starts PostgreSQL, Redis and Mailpit from `compose.yaml`, and Flyway creates the schema on first start.
 
 ```powershell
 git clone https://github.com/Abhishek360007/BookMySeat.git
@@ -463,25 +463,16 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 
 **Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, plus the payment and email variables above and `OTLP_ENABLED` / `OTLP_ENDPOINT` / `OTLP_AUTHORIZATION` for Grafana Cloud. No secrets are in the repo, and production uses its own JWT secret.
 
-**Faster cold starts with Java 25's AOT cache:** the Docker build does a training run that starts the app as far as a ready Spring context, and Java saves the loaded and linked classes plus method profiles into an AOT cache (`app.aot`, JEP 483/514/515). It replaced the Class Data Sharing archive from Week 7. Each variant was started twice in a local container with Render's limits (512 MB, 0.1 CPU):
+**Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download. On Render, waking from sleep went from about 197 s to about 125 s.
 
-| Startup | Ready after | First `/api/shows` |
-|---|---|---|
-| Java 21 + CDS (until Week 17) | 119 s, 122 s | 4.7 to 5.6 s |
-| Java 25 + CDS | 113 s, 124 s | 5.2 to 5.6 s |
-| **Java 25 + AOT cache** | **98 s, 102 s** | 4.3 to 4.9 s |
-| Java 25, no cache | 181 s, 190 s | about 5.4 s |
+**Java 25's AOT cache, tried and parked:** in Week 18 the image ran on Java 25 with an AOT cache instead of CDS (JEP 483/514/515). In a local container with Render's limits (512 MB, 0.1 CPU, two starts each) it was ready in 98 and 102 s, against 119 and 122 s for Java 21 with CDS; Java 25 with CDS alone made no difference (113 and 124 s). The project stays on Java 21 for now, so local builds need no new JDK. Two traps for when it comes back:
 
-The cache adds 43 MB to the image. Two details stop a cache from being silently ignored, or worse, from stopping the JVM:
+- **Heap size:** the training run must size the heap as on the instance (`-XX:MaxRAM=512m`), not from the build machine's RAM.
+- **Initial heap:** Serial GC needs an initial heap of at least 16 MB (`-Xms32m`) to load the cached objects.
 
-- **Same JVM options:** the training run uses the same JVM options as production, and `-XX:MaxRAM=512m` sizes its heap as on the instance rather than from the build machine's RAM.
-- **Initial heap:** `-Xms32m` in the `ENTRYPOINT` is needed because Serial GC copies the cached objects into the heap at startup. With the default 8 MB initial heap the JVM refuses to start (`Unable to use AOT cache`).
+Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compact object headers saved about 1% of peak memory under load, which is within noise.
 
-CI starts the image's real `ENTRYPOINT` in 512 MB with `-XX:AOTMode=on`, so a cache the JVM can't use fails the build instead of the deploy.
-
-**Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` (set in the image, and the same on Render) keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU. C1 only (`TieredStopAtLevel=1`) also limits what the cached method profiles can do, since they mainly help the C2 compiler; on one slow CPU, skipping C2 is still the better trade.
-
-**Compact object headers (Java 25), measured and left off:** with `-XX:+UseCompactObjectHeaders` (trained into the cache too), the k6 browse test (50 users, 512 MB, 1 CPU, two runs each) peaked at 346 and 356 MiB against 350 and 361 MiB without it, about 1%, less than the spread between two runs of the same setting. The app's own objects are only around 100 MiB of heap; most of the ~280 MiB baseline is code, metaspace and the mapped cache, which smaller headers don't shrink. Not worth another option the cache has to match.
+**Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
 
 **Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats (a premium row, a recliner row and a centre aisle), and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
 
@@ -548,7 +539,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 15:** e-tickets: signed QR codes in the app and the confirmation email, a camera check-in page that lets each ticket in once
 - [x] **Week 16:** seat categories (Regular / Premium / Recliner) with their own prices, aisles, per-seat totals that keep their snapshot
 - [x] **Week 17:** monitoring with OpenTelemetry and Grafana Cloud: metrics and traces over OTLP, request and trace ids in every log line, a dashboard and `promtool`-tested alert rules kept in the repo
-- [x] **Week 18:** Java 25, its AOT cache instead of CDS (cold start at 0.1 CPU from about 120 s to 100 s), with the traps that make a cache unusable caught in CI; compact object headers measured and left off; cold starts on the dashboard
+- [x] **Week 18:** cold starts on the dashboard (each Render wake-up shows its time until ready); Java 25 with its AOT cache measured (about 100 s instead of 120 s at 0.1 CPU) and parked, the project stays on Java 21
 
 ## Author
 

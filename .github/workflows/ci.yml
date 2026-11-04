@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '21'
           cache: maven
       # Runs unit tests and the Testcontainers tests (Ubuntu runners have Docker)
       - name: Build and test
@@ -38,20 +38,15 @@ jobs:
       # A broken Dockerfile fails the build too
       - name: Build Docker image
         run: docker build -t bookmyseat:ci .
-      # The image's own ENTRYPOINT must start from its AOT cache the way Render runs it: in 512 MB (a cache that
-      # doesn't fit the heap makes the JVM refuse to start), with Render's JAVA_TOOL_OPTIONS and the OTEL_* variables
-      # its builder sets (they once broke the deploy). AOTMode=on fails instead of silently starting without the
-      # cache; JDK_JAVA_OPTIONS adds the training run's flags, so it starts as far as the Spring context, no database.
-      - name: Start from the AOT cache like Render does
+      # Render's builder sets OTEL_* variables pointing at a Unix socket; the app must still start with them
+      # (they once broke the deploy). Same start as the Dockerfile's CDS training run.
+      - name: Start with Render's OTEL_* variables
         run: |
-          docker run --rm --memory=512m \
-            -e JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k" \
-            -e OTEL_EXPORTER_OTLP_ENDPOINT=unix:///dev/otel-grpc.sock -e OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
-            -e JDK_JAVA_OPTIONS="-XX:AOTMode=on -Dspring.context.exit=onRefresh \
-              -Dspring.datasource.url=jdbc:postgresql://localhost:5432/aot-training -Dspring.flyway.enabled=false \
-              -Dspring.jpa.hibernate.ddl-auto=none -Dspring.jpa.properties.hibernate.boot.allow_jdbc_metadata_access=false \
-              -Dspring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect" \
-            bookmyseat:ci
+          docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT=unix:///dev/otel-grpc.sock -e OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+            --entrypoint java bookmyseat:ci -Dspring.context.exit=onRefresh \
+            -Dspring.datasource.url=jdbc:postgresql://localhost:5432/cds-training -Dspring.flyway.enabled=false \
+            -Dspring.jpa.hibernate.ddl-auto=none -Dspring.jpa.properties.hibernate.boot.allow_jdbc_metadata_access=false \
+            -Dspring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect -jar app.jar
       # Continuous deployment: only after everything above is green, and only for pushes to main.
       # Skipped (not failed) when the RENDER_DEPLOY_HOOK_URL secret isn't set, e.g. on forks.
       - name: Deploy to Render
