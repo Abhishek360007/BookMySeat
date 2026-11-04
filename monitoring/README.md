@@ -9,6 +9,7 @@ are reviewed and versioned like code.
 | [`bookmyseat-dashboard.json`](bookmyseat-dashboard.json) | Grafana dashboard: overview, traffic, bookings, payments and email, JVM |
 | [`alerts.yaml`](alerts.yaml) | Alert rules (Prometheus rule format) |
 | [`alerts.test.yaml`](alerts.test.yaml) | Unit tests for the rules: each alert fires on a bad case and stays quiet on a normal one (run in CI) |
+| [`push-to-grafana.py`](push-to-grafana.py) | Creates or updates the folder, dashboard and alert rules in a Grafana stack through its API |
 
 ## Local Grafana
 
@@ -22,10 +23,22 @@ and pick the `Prometheus` data source. Traces: **Explore → Tempo**, service `B
 
 ## Grafana Cloud
 
-- **Dashboard:** **Dashboards → New → Import**, upload `bookmyseat-dashboard.json`, pick the
-  `grafanacloud-<stack>-prom` data source.
-- **Alerts:** **Alerting → Alert rules → More → Import to Grafana-managed rules**, choose the YAML file
-  `alerts.yaml`, then route them to an email contact point under **Alerting → Notification policies**.
+The production stack's dashboard and rules were created with the script, so a change to the files is one command away:
+
+1. **Service account:** in the stack's Grafana, **Administration → Users and access → Service accounts**: add one
+   with the Editor role and a token.
+2. **Run:** `GRAFANA_URL=https://<stack>.grafana.net GRAFANA_SA_TOKEN=<token> python monitoring/push-to-grafana.py`.
+   The first run creates the `BookMySeat` folder and the dashboard. Grafana gives a service account no rights on a
+   folder it created, so the rules need Edit on that folder first (**Dashboards → BookMySeat → Folder actions →
+   Manage permissions**); run it again and the 8 rules appear, evaluated every minute. Re-running updates in place.
+3. **Email:** **Alerting → Contact points** (an Email contact point) and **Notification policies** (make it the
+   default). The rules treat "no data" as normal, because the app sleeps.
+
+Each rule's PromQL already holds its threshold, so any series it returns fires. Messages use Grafana's
+`$values.A.Value` where Prometheus says `$value`.
+
+The dashboard can also be imported by hand: **Dashboards → New → Import**, upload `bookmyseat-dashboard.json`, pick
+the `grafanacloud-<stack>-prom` data source.
 
 ## Testing the rules
 

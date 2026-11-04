@@ -434,7 +434,9 @@ Counters only move once their transaction commits, so a rolled-back confirm is n
 - **Alerts:** [`monitoring/alerts.yaml`](monitoring/alerts.yaml): server errors, slow requests, a restart loop, an email backlog or given-up emails, a refund to do by hand, failing refunds, a nearly full heap. [`alerts.test.yaml`](monitoring/alerts.test.yaml) proves each one fires on a bad case and stays quiet on a normal one, and CI runs it.
 - **Counting across restarts:** the free instance sleeps after 15 idle minutes, and each wake-up starts the counters again. Business counters exist at 0 from startup, and the dashboard's totals count a series that is new in the range from 0. There is no "app is down" alert, because missing metrics are normal while it sleeps.
 
-Locally, `docker compose --profile monitoring up -d lgtm` starts the same stack (Grafana, Prometheus, Tempo) in one container. [`monitoring/README.md`](monitoring/README.md) covers importing the dashboard and alerts, and the counting rules.
+Locally, `docker compose --profile monitoring up -d lgtm` starts the same stack (Grafana, Prometheus, Tempo) in one container. [`monitoring/push-to-grafana.py`](monitoring/push-to-grafana.py) creates the dashboard and the alert rules in a Grafana stack (the production one was set up with it), and [`monitoring/README.md`](monitoring/README.md) covers that and the counting rules.
+
+![Grafana Cloud dashboard with live production data: requests, errors, latency, bookings, seats by category and check-ins](docs/screenshots/grafana-dashboard.png)
 
 ## Deployment
 
