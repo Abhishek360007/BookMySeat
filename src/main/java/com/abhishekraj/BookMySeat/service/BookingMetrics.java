@@ -15,6 +15,8 @@ import java.util.Locale;
 /**
  * Booking counters, recorded only once the booking's transaction has committed: a confirm that loses the
  * optimistic-lock race at commit is a conflict, not a booking. Tags stay low-cardinality (never show or user ids).
+ * Every counter exists from startup at 0: Prometheus' increase() needs a sample before the first booking, or the
+ * first booking after each start (each wake-up on Render) would never be counted.
  */
 @Component
 public class BookingMetrics {
@@ -23,6 +25,13 @@ public class BookingMetrics {
 
 	public BookingMetrics(MeterRegistry meterRegistry) {
 		this.meterRegistry = meterRegistry;
+		meterRegistry.counter("bookings.confirmed");
+		meterRegistry.counter("bookings.revenue");
+		for (SeatCategory category : SeatCategory.values()) {
+			meterRegistry.counter("bookings.seats", "category", category.name().toLowerCase(Locale.ROOT));
+		}
+		meterRegistry.counter("bookings.cancelled", "by", "customer");
+		meterRegistry.counter("bookings.cancelled", "by", "show");
 	}
 
 	public void confirmed(Booking booking) {

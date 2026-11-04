@@ -1,0 +1,90 @@
+# BookMySeat alert rules (Prometheus rule format; import into Grafana Cloud alerting, see monitoring/README.md).
+# Checked by monitoring/alerts.test.yaml:  promtool test rules monitoring/alerts.test.yaml
+#
+# No "app is down" rule on purpose: on Render's free plan the app sleeps after 15 idle minutes, so missing
+# metrics are normal. A restart loop (crashing on start) is caught by BookMySeatRestartLoop instead.
+#
+# Counters are created at their first use, and a process restart starts them again from 0. For one-off events
+# the rules count "(increase() over the window if the series existed before it) or its latest value", so the
+# first event after a restart (a wake-up) still counts.
+groups:
+  - name: bookmyseat
+    rules:
+      - alert: BookMySeatServerErrors
+        expr: |
+          sum(rate(http_server_requests_milliseconds_count{job="BookMySeat",status=~"5.."}[10m]))
+            / sum(rate(http_server_requests_milliseconds_count{job="BookMySeat"}[10m])) > 0.05
+          and sum(increase(http_server_requests_milliseconds_count{job="BookMySeat",status=~"5.."}[10m])) >= 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of requests fail with a server error"
+          description: "{{ $value | humanizePercentage }} of requests answered 5xx over 10 minutes. Find a failing request in Tempo (service BookMySeat, status 5xx) and its request id in the Render logs."
+
+      - alert: BookMySeatSlowRequests
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_server_requests_milliseconds_bucket{job="BookMySeat"}[10m]))) > 2000
+          and sum(increase(http_server_requests_milliseconds_count{job="BookMySeat"}[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency above 2 s"
+          description: "95% of requests take up to {{ $value | humanize }} ms. Slow spans in Tempo show whether it is the database (Neon), Redis (Upstash) or Razorpay."
+
+      - alert: BookMySeatRestartLoop
+        expr: changes(process_start_time_milliseconds{job="BookMySeat"}[15m]) >= 3
+        labels:
+          severity: critical
+        annotations:
+          summary: "The app started {{ $value }} times in 15 minutes"
+          description: "More than wake-ups from sleep can explain: it is probably crashing on start (out of memory, a bad environment variable). Check Render's logs and events."
+
+      - alert: BookMySeatEmailBacklog
+        expr: max(emails_outbox_oldest_pending_seconds{job="BookMySeat"}) > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An email has been waiting over 15 minutes"
+          description: "The oldest outbox email is {{ $value | humanizeDuration }} old: Brevo is down, refusing, or the API key changed. The outbox keeps retrying."
+
+      - alert: BookMySeatEmailsGivenUp
+        expr: |
+          sum((increase(emails_total{job="BookMySeat",outcome="failed"}[1h]) and emails_total{job="BookMySeat",outcome="failed"} offset 1h)
+            or last_over_time(emails_total{job="BookMySeat",outcome="failed"}[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The outbox gave up on an email"
+          description: "{{ $value }} email(s) failed every retry in the last hour. Their rows stay in email_outbox with status FAILED and last_error."
+
+      - alert: BookMySeatRefundNeedsManualAction
+        expr: |
+          sum((increase(refunds_total{job="BookMySeat",outcome="manual"}[1h]) and refunds_total{job="BookMySeat",outcome="manual"} offset 1h)
+            or last_over_time(refunds_total{job="BookMySeat",outcome="manual"}[1h])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A refund has to be made by hand"
+          description: "Razorpay refused to refund an extra payment and nothing retries it. The app log has the payment id: refund it from the Razorpay dashboard."
+
+      - alert: BookMySeatRefundsFailing
+        expr: sum(increase(refunds_total{job="BookMySeat",outcome="retry"}[30m])) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Refunds keep failing"
+          description: "{{ $value }} refund attempts failed in 30 minutes. The job retries them, but customers are waiting for their money: check Razorpay's status and API keys."
+
+      - alert: BookMySeatHeapNearlyFull
+        expr: |
+          sum(jvm_memory_used_bytes{job="BookMySeat",area="heap"})
+            / sum(jvm_memory_max_bytes{job="BookMySeat",area="heap"} > 0) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Heap over 90% full"
+          description: "The JVM heap is {{ $value | humanizePercentage }} full on a 512 MB instance; an out-of-memory restart may follow."

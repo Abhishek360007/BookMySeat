@@ -22,6 +22,12 @@ jobs:
       # Runs unit tests and the Testcontainers tests (Ubuntu runners have Docker)
       - name: Build and test
         run: ./mvnw -B verify
+      # Alert rules: valid, and each fires (or stays quiet) as the unit tests expect; the dashboard is valid JSON
+      - name: Check monitoring files
+        run: |
+          docker run --rm -v "$PWD/monitoring:/rules" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 \
+            test rules alerts.test.yaml
+          python3 -m json.tool monitoring/bookmyseat-dashboard.json > /dev/null
       # Coverage table on the run's summary page, plus the full HTML report as a downloadable artifact
       - name: Coverage summary
         run: python3 .github/scripts/coverage_summary.py >> "$GITHUB_STEP_SUMMARY"

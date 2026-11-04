@@ -1,0 +1,176 @@
+# Unit tests for alerts.yaml:  promtool test rules monitoring/alerts.test.yaml
+# (from Docker: see monitoring/README.md). Series values are one sample per minute; "_" is a missing sample.
+rule_files:
+  - alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 2 of every 12 requests fail: fires once the 5% / 3-error condition has held for 5 minutes
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_milliseconds_count{job="BookMySeat",uri="/api/bookings",status="201"}'
+        values: '0+10x30'
+      - series: 'http_server_requests_milliseconds_count{job="BookMySeat",uri="/api/bookings",status="500"}'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: BookMySeatServerErrors
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: BookMySeatServerErrors
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "More than 5% of requests fail with a server error"
+              description: "16.67% of requests answered 5xx over 10 minutes. Find a failing request in Tempo (service BookMySeat, status 5xx) and its request id in the Render logs."
+
+  # A single 500 among a handful of requests is a bad ratio but not enough errors to wake anyone
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_milliseconds_count{job="BookMySeat",uri="/api/shows",status="200"}'
+        values: '0 1 2 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3'
+      - series: 'http_server_requests_milliseconds_count{job="BookMySeat",uri="/api/shows",status="500"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: BookMySeatServerErrors
+        exp_alerts: []
+
+  # Every request in the 2–5 s bucket for 20 minutes
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_milliseconds_bucket{job="BookMySeat",le="2000"}'
+        values: '0x30'
+      - series: 'http_server_requests_milliseconds_bucket{job="BookMySeat",le="5000"}'
+        values: '0+5x30'
+      - series: 'http_server_requests_milliseconds_bucket{job="BookMySeat",le="+Inf"}'
+        values: '0+5x30'
+      - series: 'http_server_requests_milliseconds_count{job="BookMySeat"}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: BookMySeatSlowRequests
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "p95 latency above 2 s"
+              description: "95% of requests take up to 4.85k ms. Slow spans in Tempo show whether it is the database (Neon), Redis (Upstash) or Razorpay."
+
+  # Three starts within 15 minutes is a crash loop; one wake-up from sleep is not
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_milliseconds{job="BookMySeat"}'
+        values: '1000 1000 2000 2000 3000 3000 4000 4000'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BookMySeatRestartLoop
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: BookMySeatRestartLoop
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: BookMySeat
+            exp_annotations:
+              summary: "The app started 3 times in 15 minutes"
+              description: "More than wake-ups from sleep can explain: it is probably crashing on start (out of memory, a bad environment variable). Check Render's logs and events."
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_milliseconds{job="BookMySeat"}'
+        values: '1000x20 _x20 9000x20'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: BookMySeatRestartLoop
+        exp_alerts: []
+
+  # The oldest email waits 1000 s from minute 6: pending, then firing after 5 minutes
+  - interval: 1m
+    input_series:
+      - series: 'emails_outbox_oldest_pending_seconds{job="BookMySeat"}'
+        values: '0x5 1000x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: BookMySeatEmailBacklog
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: BookMySeatEmailBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "An email has been waiting over 15 minutes"
+              description: "The oldest outbox email is 16m 40s old: Brevo is down, refusing, or the API key changed. The outbox keeps retrying."
+
+  # A failure right after a wake-up: the series is new (it starts at 1), and still counts
+  - interval: 1m
+    input_series:
+      - series: 'emails_total{job="BookMySeat",kind="BOOKING_CONFIRMED",outcome="failed"}'
+        values: '_x30 1x20'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: BookMySeatEmailsGivenUp
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The outbox gave up on an email"
+              description: "1 email(s) failed every retry in the last hour. Their rows stay in email_outbox with status FAILED and last_error."
+  # An old failure, more than an hour ago, no longer alerts
+  - interval: 1m
+    input_series:
+      - series: 'emails_total{job="BookMySeat",kind="BOOKING_CONFIRMED",outcome="failed"}'
+        values: '2x150'
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: BookMySeatEmailsGivenUp
+        exp_alerts: []
+
+  # Pre-registered at 0, then one manual refund
+  - interval: 1m
+    input_series:
+      - series: 'refunds_total{job="BookMySeat",outcome="manual"}'
+        values: '0x30 1x20'
+      - series: 'refunds_total{job="BookMySeat",outcome="retry"}'
+        values: '0x10 1 2 3 3x30'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: BookMySeatRefundNeedsManualAction
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "A refund has to be made by hand"
+              description: "Razorpay refused to refund an extra payment and nothing retries it. The app log has the payment id: refund it from the Razorpay dashboard."
+      - eval_time: 14m
+        alertname: BookMySeatRefundsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Refunds keep failing"
+              description: "3 refund attempts failed in 30 minutes. The job retries them, but customers are waiting for their money: check Razorpay's status and API keys."
+      - eval_time: 50m
+        alertname: BookMySeatRefundsFailing
+        exp_alerts: []
+
+  # 95% of the heap for 15 minutes; the -1 "no limit" pool is left out of the maximum
+  - interval: 1m
+    input_series:
+      - series: 'jvm_memory_used_bytes{job="BookMySeat",area="heap",id="G1 Old Gen"}'
+        values: '950x20'
+      - series: 'jvm_memory_max_bytes{job="BookMySeat",area="heap",id="G1 Old Gen"}'
+        values: '1000x20'
+      - series: 'jvm_memory_max_bytes{job="BookMySeat",area="heap",id="G1 Eden Space"}'
+        values: '-1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: BookMySeatHeapNearlyFull
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Heap over 90% full"
+              description: "The JVM heap is 95% full on a 512 MB instance; an out-of-memory restart may follow."

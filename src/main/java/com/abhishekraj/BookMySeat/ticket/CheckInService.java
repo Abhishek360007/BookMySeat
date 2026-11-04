@@ -54,6 +54,12 @@ public class CheckInService {
 		this.clock = clock;
 		this.opensBefore = opensBefore;
 		this.closesAfter = closesAfter;
+		// At 0 from startup, so increase() counts the first scan after a restart (see BookingMetrics)
+		meterRegistry.counter("checkins", "result", "ok");
+		meterRegistry.counter("checkins", "result", "invalid");
+		for (Reason reason : Reason.values()) {
+			meterRegistry.counter("checkins", "result", reason.name().toLowerCase(Locale.ROOT));
+		}
 	}
 
 	@Transactional

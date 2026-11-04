@@ -40,6 +40,9 @@ public class RefundService {
 		this.events = events;
 		this.meterRegistry = meterRegistry;
 		this.self = self;
+		for (String outcome : new String[] {"refunded", "retry", "manual"}) {
+			meterRegistry.counter("refunds", "outcome", outcome); // at 0 from startup, see BookingMetrics
+		}
 	}
 
 	/** Requests the refund once the current transaction (which set REFUND_PENDING) has committed. */

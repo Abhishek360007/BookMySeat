@@ -29,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -120,6 +121,21 @@ class BusinessMetricsTest {
 
 		assertThat(count("bookings.cancelled", "by", "show")).isEqualTo(byShow + 2);
 		assertThat(count("bookings.cancelled", "by", "customer")).isEqualTo(byCustomer);
+	}
+
+	@Test
+	void businessCounters_existFromStartup_soTheFirstEventAfterARestartIsCounted() {
+		for (String[] meter : new String[][] {
+				{"bookings.confirmed"}, {"bookings.revenue"},
+				{"bookings.seats", "category", "regular"}, {"bookings.seats", "category", "premium"},
+				{"bookings.seats", "category", "recliner"},
+				{"bookings.cancelled", "by", "customer"}, {"bookings.cancelled", "by", "show"},
+				{"payments", "outcome", "confirmed"}, {"payments", "outcome", "refund"},
+				{"refunds", "outcome", "refunded"}, {"refunds", "outcome", "manual"},
+				{"checkins", "result", "ok"}, {"checkins", "result", "too_early"}}) {
+			String[] tags = Arrays.copyOfRange(meter, 1, meter.length);
+			assertThat(meters.find(meter[0]).tags(tags).counter()).as(String.join(" ", meter)).isNotNull();
+		}
 	}
 
 	@Test

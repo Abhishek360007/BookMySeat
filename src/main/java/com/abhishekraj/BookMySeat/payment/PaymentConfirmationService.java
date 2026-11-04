@@ -42,6 +42,10 @@ public class PaymentConfirmationService {
 		this.seatHoldService = seatHoldService;
 		this.meterRegistry = meterRegistry;
 		this.clock = clock;
+		// At 0 from startup, so increase() counts the first one after a restart (see BookingMetrics)
+		for (String outcome : new String[] {"confirmed", "refund", "expired", "attempt_failed"}) {
+			meterRegistry.counter("payments", "outcome", outcome);
+		}
 	}
 
 	@Transactional
