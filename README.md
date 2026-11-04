@@ -1,7 +1,7 @@
 # BookMySeat 🎟️
 
 [![CI](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhishek360007/BookMySeat/actions/workflows/ci.yml)
-![Java](https://img.shields.io/badge/Java-21-orange)
+![Java](https://img.shields.io/badge/Java-25-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white)
@@ -324,7 +324,7 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 
 ## Run locally
 
-**Prerequisites:** Java 21 and Docker Desktop (running). Spring Boot starts PostgreSQL, Redis and Mailpit from `compose.yaml`, and Flyway creates the schema on first start.
+**Prerequisites:** Java 25 and Docker Desktop (running). Spring Boot starts PostgreSQL, Redis and Mailpit from `compose.yaml`, and Flyway creates the schema on first start.
 
 ```powershell
 git clone https://github.com/Abhishek360007/BookMySeat.git

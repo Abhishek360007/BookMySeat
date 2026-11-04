@@ -27,7 +27,7 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>21</java.version>
+		<java.version>25</java.version>
 		<shedlock.version>7.10.1</shedlock.version>
 	</properties>
 	<dependencies>
