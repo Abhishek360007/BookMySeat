@@ -3,14 +3,14 @@ package com.abhishekraj.BookMySeat.payment;
 import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
+import com.abhishekraj.BookMySeat.support.AfterCommit;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -28,28 +28,32 @@ public class RefundService {
 	private final PaymentGateway gateway;
 	private final Clock clock;
 	private final ApplicationEventPublisher events;
+	private final MeterRegistry meterRegistry;
 	private final RefundService self;
 
 	// self: calls through the Spring proxy, so refund() really runs in its own transaction
 	public RefundService(PaymentRepository paymentRepository, PaymentGateway gateway, Clock clock,
-			ApplicationEventPublisher events, @Lazy RefundService self) {
+			ApplicationEventPublisher events, MeterRegistry meterRegistry, @Lazy RefundService self) {
 		this.paymentRepository = paymentRepository;
 		this.gateway = gateway;
 		this.clock = clock;
 		this.events = events;
+		this.meterRegistry = meterRegistry;
 		this.self = self;
 	}
 
 	/** Requests the refund once the current transaction (which set REFUND_PENDING) has committed. */
 	public void refundAfterCommit(String orderId) {
-		afterCommit(() -> refundQuietly(orderId));
+		AfterCommit.run(() -> refundQuietly(orderId));
 	}
 
 	public void refundExtraPaymentAfterCommit(String paymentId, BigDecimal amount) {
-		afterCommit(() -> {
+		AfterCommit.run(() -> {
 			try {
 				gateway.refund(paymentId, PaymentService.toMinor(amount));
+				count("refunded");
 			} catch (RuntimeException ex) {
+				count("manual"); // nothing retries this one
 				log.error("Refund of extra payment {} failed; refund it from the Razorpay dashboard", paymentId, ex);
 			}
 		});
@@ -69,6 +73,7 @@ public class RefundService {
 		String refundId = gateway.refund(payment.getPaymentId(), PaymentService.toMinor(payment.getAmount()));
 		payment.refunded(refundId, Instant.now(clock));
 		events.publishEvent(new PaymentRefundedEvent(orderId)); // e.g. the refund email, committed with this change
+		AfterCommit.run(() -> count("refunded"));
 		log.info("Order {} refunded: {}", orderId, refundId);
 	}
 
@@ -76,20 +81,12 @@ public class RefundService {
 		try {
 			self.refund(orderId);
 		} catch (RuntimeException ex) {
+			count("retry");
 			log.warn("Refund for order {} failed, will retry: {}", orderId, ex.getMessage());
 		}
 	}
 
-	private static void afterCommit(Runnable action) {
-		if (TransactionSynchronizationManager.isSynchronizationActive()) {
-			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-				@Override
-				public void afterCommit() {
-					action.run();
-				}
-			});
-		} else {
-			action.run();
-		}
+	private void count(String outcome) {
+		meterRegistry.counter("refunds", "outcome", outcome).increment();
 	}
 }

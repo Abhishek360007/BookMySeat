@@ -48,10 +48,9 @@ public class BookingService {
 	private final Clock clock;
 	private final long cancelCutoffMinutes;
 	private final ApplicationEventPublisher events;
+	private final BookingMetrics bookingMetrics;
 
-	// Business metrics at /actuator/metrics. Tags stay low-cardinality: never user or seat ids.
-	private final Counter bookingsConfirmed;
-	private final Counter bookingsCancelled;
+	// Refusal counters at /actuator/metrics (booking counts: BookingMetrics). Tags stay low-cardinality.
 	private final Counter conflictHoldMissing;
 	private final Counter conflictAlreadyBooked;
 	private final Counter holdSuccess;
@@ -60,7 +59,7 @@ public class BookingService {
 	public BookingService(BookingRepository bookingRepository, SeatRepository seatRepository,
 			ShowRepository showRepository, UserRepository userRepository, SeatHoldService seatHoldService,
 			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes,
-			MeterRegistry meterRegistry, ApplicationEventPublisher events) {
+			MeterRegistry meterRegistry, BookingMetrics bookingMetrics, ApplicationEventPublisher events) {
 		this.bookingRepository = bookingRepository;
 		this.seatRepository = seatRepository;
 		this.showRepository = showRepository;
@@ -69,8 +68,7 @@ public class BookingService {
 		this.clock = clock;
 		this.cancelCutoffMinutes = cancelCutoffMinutes;
 		this.events = events;
-		this.bookingsConfirmed = meterRegistry.counter("bookings.confirmed");
-		this.bookingsCancelled = meterRegistry.counter("bookings.cancelled");
+		this.bookingMetrics = bookingMetrics;
 		this.conflictHoldMissing = meterRegistry.counter("booking.conflicts", "reason", "hold_missing");
 		this.conflictAlreadyBooked = meterRegistry.counter("booking.conflicts", "reason", "already_booked");
 		this.holdSuccess = meterRegistry.counter("seat.holds", "result", "success");
@@ -138,7 +136,7 @@ public class BookingService {
 		});
 
 		events.publishEvent(new BookingConfirmedEvent(booking.getId())); // e.g. the confirmation email
-		bookingsConfirmed.increment();
+		bookingMetrics.confirmed(booking);
 		return BookingResponse.from(booking);
 	}
 
@@ -169,7 +167,7 @@ public class BookingService {
 			}
 		});
 		events.publishEvent(new BookingConfirmedEvent(booking.getId()));
-		bookingsConfirmed.increment();
+		bookingMetrics.confirmed(booking);
 		return Optional.of(booking);
 	}
 
@@ -189,7 +187,6 @@ public class BookingService {
 		}
 		booking.cancel();
 		events.publishEvent(new BookingCancelledEvent(booking.getId(), false)); // e.g. refund a paid booking
-		bookingsCancelled.increment();
 		return BookingResponse.from(booking);
 	}
 

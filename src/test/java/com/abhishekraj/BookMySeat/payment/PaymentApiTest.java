@@ -12,6 +12,7 @@ import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import com.jayway.jsonpath.JsonPath;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,6 +93,7 @@ class PaymentApiTest {
 	@Autowired PaymentMaintenanceJob maintenanceJob;
 	@Autowired JdbcTemplate jdbc;
 	@Autowired OutboxEmailRepository outboxRepository;
+	@Autowired MeterRegistry meters;
 
 	String admin;
 	String user;
@@ -425,14 +427,18 @@ class PaymentApiTest {
 		String otherOrder = orderOf(checkout(other, seats.get(0)));
 		verify(other, otherOrder, "pay_other2", sign(otherOrder, "pay_other2"));
 
+		double retries = refunds("retry");
+		double refunded = refunds("refunded");
 		gateway.failRefunds = true;
 		webhook("evt_late2", "payment.captured", lateOrder, "pay_late2").andExpect(status().isOk());
 		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUND_PENDING);
 		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).isEmpty(); // not refunded yet
+		assertThat(refunds("retry")).isEqualTo(retries + 1);
 
 		gateway.failRefunds = false;
 		runMaintenanceJob();
 		assertThat(statusOf(lateOrder)).isEqualTo(PaymentStatus.REFUNDED);
+		assertThat(refunds("refunded")).isEqualTo(refunded + 1);
 		assertThat(gateway.refunds).singleElement().satisfies(r -> assertThat(r.paymentId()).isEqualTo("pay_late2"));
 		assertThat(emails("PAYMENT_REFUNDED", "pay-user1@example.com")).hasSize(1);
 	}
@@ -470,6 +476,11 @@ class PaymentApiTest {
 	void expire(String orderId) {
 		jdbc.update("update payments set expires_at = now() - interval '1 minute' where order_id = ?", orderId);
 		runMaintenanceJob();
+	}
+
+	double refunds(String outcome) {
+		var counter = meters.find("refunds").tag("outcome", outcome).counter();
+		return counter == null ? 0 : counter.count();
 	}
 
 	void runMaintenanceJob() {

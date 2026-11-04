@@ -19,6 +19,7 @@ public class EmailOutboxJob {
 	public void run() {
 		int handled = dispatcher.deliverDue();
 		int purged = dispatcher.purgeSent();
+		dispatcher.refreshBacklog();
 		if (handled > 0 || purged > 0) {
 			log.info("Email outbox: {} delivered or retried, {} old sent emails removed", handled, purged);
 		}

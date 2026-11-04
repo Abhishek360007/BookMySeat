@@ -8,7 +8,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Delivers outbox emails. Each email is sent in its own transaction that holds its row lock while sending, so
@@ -28,6 +30,11 @@ public class OutboxDispatcher {
 	private final Clock clock;
 	private final OutboxDispatcher self;
 
+	// Gauges, refreshed by the outbox job: a growing or ageing backlog means the provider is down or refusing
+	private final AtomicLong pending = new AtomicLong();
+	private final AtomicLong oldestPendingSeconds = new AtomicLong();
+	private final AtomicLong failed = new AtomicLong();
+
 	// self: calls through the Spring proxy, so deliver() really runs in its own transaction
 	public OutboxDispatcher(OutboxEmailRepository repository, EmailSender sender, EmailProperties properties,
 			MeterRegistry meterRegistry, Clock clock, @Lazy OutboxDispatcher self) {
@@ -37,6 +44,18 @@ public class OutboxDispatcher {
 		this.meterRegistry = meterRegistry;
 		this.clock = clock;
 		this.self = self;
+		meterRegistry.gauge("emails.outbox.pending", pending);
+		meterRegistry.gauge("emails.outbox.oldest_pending_seconds", oldestPendingSeconds);
+		meterRegistry.gauge("emails.outbox.failed", failed);
+	}
+
+	/** One aggregate query, run by the outbox job, which already polls the table. */
+	public void refreshBacklog() {
+		OutboxBacklog backlog = repository.backlog();
+		pending.set(backlog.pending());
+		oldestPendingSeconds.set(backlog.oldestPending() == null ? 0
+				: Math.max(0, Duration.between(backlog.oldestPending(), Instant.now(clock)).toSeconds()));
+		failed.set(backlog.failed());
 	}
 
 	/** Delivers emails that are due, a batch at a time. Returns how many were handled (sent or failed). */

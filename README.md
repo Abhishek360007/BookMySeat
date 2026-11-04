@@ -406,13 +406,19 @@ Open **http://localhost:8080/swagger-ui.html**. To stop only the app container a
 | Metric | Tags | Counts |
 |---|---|---|
 | `bookings.confirmed` | none | Successful bookings |
-| `bookings.cancelled` | none | Cancellations |
+| `bookings.seats` | `category` = `regular` / `premium` / `recliner` | Seats sold |
+| `bookings.revenue` | none | Value of confirmed bookings in rupees (what was paid, for online payments) |
+| `bookings.cancelled` | `by` = `customer` / `show` | Cancellations; `show` = an admin cancelled the whole show |
 | `seat.holds` | `result` = `success` / `conflict` | Hold attempts, including lost hold races |
 | `booking.conflicts` | `reason` = `hold_missing` / `already_booked` / `lock_lost` | Why confirms were rejected; `lock_lost` is an optimistic-lock race lost at commit |
+| `payments` | `outcome` = `confirmed` / `refund` / `expired` / `attempt_failed` | What happened to Razorpay orders |
+| `refunds` | `outcome` = `refunded` / `retry` / `manual` | Refund requests; `manual` = an extra payment Razorpay refused to refund, to do from its dashboard |
+| `emails` | `kind`, `outcome` = `sent` / `retry` / `failed` | Outbox deliveries |
+| `emails.outbox.pending`, `emails.outbox.oldest_pending_seconds`, `emails.outbox.failed` | none | Gauges, refreshed each minute: emails waiting, how long the oldest has waited, emails given up on |
+| `checkins` | `result` = `ok` / `invalid` / `already_checked_in` / `cancelled` / `other_show` / `too_early` / `too_late` | Ticket scans at the door |
+| `rate_limit.rejected` | `endpoint` = `login` / `register` / `verification-email` / `forgot-password` / `change-password` | Requests turned away with `429` |
 
-| `rate_limit.rejected` | `endpoint` = `login` / `register` | Requests turned away with `429` |
-
-Tags never contain user or seat ids, which keeps the number of distinct metrics small.
+Counters only move once their transaction commits, so a rolled-back confirm is never counted as a booking. Tags never contain user, show or seat ids, which keeps the number of distinct metrics small.
 
 **Logs:** every request is logged once (`GET /api/shows/2 -> 200 in 15 ms`) with its request id; health probes are skipped. Locally the id appears in brackets; in production (`prod` profile) each line is a JSON object in Elastic Common Schema, with `requestId` as a field.
 

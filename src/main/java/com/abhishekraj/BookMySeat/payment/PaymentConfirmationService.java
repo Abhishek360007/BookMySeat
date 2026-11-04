@@ -8,13 +8,12 @@ import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
 import com.abhishekraj.BookMySeat.service.BookingService;
 import com.abhishekraj.BookMySeat.service.SeatHoldService;
+import com.abhishekraj.BookMySeat.support.AfterCommit;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -66,24 +65,20 @@ public class PaymentConfirmationService {
 				payment.getSeatIds(), payment.getAmount());
 		if (booking.isPresent()) {
 			payment.confirm(paymentId, booking.get(), now);
-			meterRegistry.counter("payments", "outcome", "confirmed").increment();
+			count("confirmed");
 			log.info("Order {} paid ({}) and booked: booking {}", orderId, source, booking.get().getId());
 		} else {
 			payment.requireRefund(paymentId, "Seats were no longer available when the payment arrived", now);
-			meterRegistry.counter("payments", "outcome", "refund").increment();
+			count("refund");
 			log.warn("Order {} paid ({}) but its seats are gone: refunding", orderId, source);
 			refundService.refundAfterCommit(orderId);
 		}
 		return payment;
 	}
 
-	private static void afterCommit(Runnable action) {
-		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-			@Override
-			public void afterCommit() {
-				action.run();
-			}
-		});
+	// Counted once the decision has committed
+	private void count(String outcome) {
+		AfterCommit.run(() -> meterRegistry.counter("payments", "outcome", outcome).increment());
 	}
 
 	/** The checkout window passed without a payment: release the seats. A payment can still arrive late. */
@@ -94,10 +89,10 @@ public class PaymentConfirmationService {
 				.filter(payment -> payment.getStatus() == PaymentStatus.PENDING && payment.isExpired(now))
 				.ifPresent(payment -> {
 					payment.expire(now);
-					meterRegistry.counter("payments", "outcome", "expired").increment();
+					count("expired");
 					Long userId = payment.getUser().getId();
 					Long showId = payment.getShow().getId();
-					afterCommit(() -> seatHoldService.releaseAll(showId, payment.getSeatIds(), userId));
+					AfterCommit.run(() -> seatHoldService.releaseAll(showId, payment.getSeatIds(), userId));
 					log.info("Order {} expired unpaid; seats released", orderId);
 				});
 	}
@@ -110,7 +105,7 @@ public class PaymentConfirmationService {
 				.filter(payment -> payment.getStatus() == PaymentStatus.CONFIRMED)
 				.ifPresent(payment -> {
 					payment.requireRefund(payment.getPaymentId(), "Booking cancelled", Instant.now(clock));
-					meterRegistry.counter("payments", "outcome", "refund").increment();
+					count("refund");
 					refundService.refundAfterCommit(payment.getOrderId());
 				});
 	}
@@ -121,6 +116,6 @@ public class PaymentConfirmationService {
 		paymentRepository.findForUpdateByOrderId(orderId)
 				.filter(payment -> payment.getStatus() == PaymentStatus.PENDING)
 				.ifPresent(payment -> payment.recordFailure(reason, Instant.now(clock)));
-		meterRegistry.counter("payments", "outcome", "attempt_failed").increment();
+		count("attempt_failed");
 	}
 }

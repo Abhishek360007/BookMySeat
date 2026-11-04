@@ -55,7 +55,7 @@ class BookingServiceTest {
 	@BeforeEach
 	void setUp() {
 		bookingService = new BookingService(bookingRepository, seatRepository, showRepository, userRepository,
-				seatHoldService, Clock.fixed(NOW, ZoneOffset.UTC), 120, new SimpleMeterRegistry(), event -> {});
+				seatHoldService, Clock.fixed(NOW, ZoneOffset.UTC), 120, new SimpleMeterRegistry(), new BookingMetrics(new SimpleMeterRegistry()), event -> {});
 	}
 
 	@Test
