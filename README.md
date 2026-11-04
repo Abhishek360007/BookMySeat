@@ -348,6 +348,10 @@ Then open **http://localhost:8080/swagger-ui.html**.
 | `EMAIL_FROM` / `BREVO_API_KEY` | Sender address (a verified sender in Brevo) and Brevo API key | `no-reply@bookmyseat.dev` / not set |
 | `APP_PUBLIC_URL` | Where links in emails point | `http://localhost:8080` |
 | `TICKET_SECRET` | Key that signs e-ticket codes | Derived from `JWT_SECRET` |
+| `OTLP_METRICS_ENABLED` | Push metrics over OTLP once a minute | `false` |
+| `OTLP_ENDPOINT` / `OTLP_AUTHORIZATION` | OTLP endpoint (Grafana Cloud's gateway in production) and its `Basic …` header (prod profile only) | `http://localhost:14318` / not set |
+
+**Local Grafana:** `docker compose --profile monitoring up -d lgtm` starts Grafana with Prometheus, Tempo and Loki in one container; run the app with `OTLP_METRICS_ENABLED=true` and open **http://localhost:13000** (admin / admin). Metrics arrive under `job="BookMySeat"`.
 
 Hold duration and the cancellation cutoff are in [`application.properties`](src/main/resources/application.properties).
 
