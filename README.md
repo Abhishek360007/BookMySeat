@@ -481,6 +481,8 @@ CI starts the image's real `ENTRYPOINT` in 512 MB with `-XX:AOTMode=on`, so a ca
 
 **Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` (set in the image, and the same on Render) keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU. C1 only (`TieredStopAtLevel=1`) also limits what the cached method profiles can do, since they mainly help the C2 compiler; on one slow CPU, skipping C2 is still the better trade.
 
+**Compact object headers (Java 25), measured and left off:** with `-XX:+UseCompactObjectHeaders` (trained into the cache too), the k6 browse test (50 users, 512 MB, 1 CPU, two runs each) peaked at 346 and 356 MiB against 350 and 361 MiB without it, about 1%, less than the spread between two runs of the same setting. The app's own objects are only around 100 MiB of heap; most of the ~280 MiB baseline is code, metaspace and the mapped cache, which smaller headers don't shrink. Not worth another option the cache has to match.
+
 **Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats (a premium row, a recliner row and a centre aisle), and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
 
 ```powershell
