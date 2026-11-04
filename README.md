@@ -548,6 +548,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 15:** e-tickets: signed QR codes in the app and the confirmation email, a camera check-in page that lets each ticket in once
 - [x] **Week 16:** seat categories (Regular / Premium / Recliner) with their own prices, aisles, per-seat totals that keep their snapshot
 - [x] **Week 17:** monitoring with OpenTelemetry and Grafana Cloud: metrics and traces over OTLP, request and trace ids in every log line, a dashboard and `promtool`-tested alert rules kept in the repo
+- [x] **Week 18:** Java 25, its AOT cache instead of CDS (cold start at 0.1 CPU from about 120 s to 100 s), with the traps that make a cache unusable caught in CI; compact object headers measured and left off; cold starts on the dashboard
 
 ## Author
 
