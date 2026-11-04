@@ -116,6 +116,8 @@ class BookingEmailTest {
 		assertThat(email.html())
 				.contains("Dune &lt;Part Three&gt; &amp; More", "<b>A1, A2</b>", "href=\"https://bookmyseat.test/#/bookings\"")
 				.doesNotContain("<Part Three>");
+		// The sender sees the email before the outbox's own transaction commits it as SENT: wait for that commit
+		await(() -> outboxRepository.findAll().stream().anyMatch(e -> e.getStatus() == OutboxEmail.Status.SENT));
 		assertThat(outboxRepository.findAll()).singleElement().satisfies(e -> {
 			assertThat(e.getKind()).isEqualTo("BOOKING_CONFIRMED");
 			assertThat(e.getStatus()).isEqualTo(OutboxEmail.Status.SENT);
