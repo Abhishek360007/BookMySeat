@@ -36,13 +36,26 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>io.micrometer</groupId>
-			<artifactId>micrometer-registry-otlp</artifactId>
+			<!-- Metrics and traces over OTLP: Micrometer's OTLP registry, the OpenTelemetry tracing bridge and exporter -->
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-opentelemetry</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>io.opentelemetry</groupId>
+					<artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
-			<!-- Boot's OpenTelemetry module: the OTLP metrics export and its resource attributes need it -->
+			<!-- Boot's RestClient.Builder (instrumented: each Razorpay / Brevo call is a span) -->
 			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-opentelemetry</artifactId>
+			<artifactId>spring-boot-starter-restclient</artifactId>
+		</dependency>
+		<dependency>
+			<!-- Traces go out with the JDK's HttpClient: no OkHttp + Kotlin runtime on a 512 MB instance -->
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -132,6 +145,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-opentelemetry-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>

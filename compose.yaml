@@ -23,7 +23,7 @@ services:
       - '11025:1025'
       - '18025:8025'
   # Grafana with Prometheus, Tempo and Loki in one container, to see the app's metrics locally (admin / admin).
-  # Only started with: docker compose --profile monitoring up -d lgtm, then run the app with OTLP_METRICS_ENABLED=true
+  # Only started with: docker compose --profile monitoring up -d lgtm, then run the app with OTLP_ENABLED=true
   lgtm:
     image: 'grafana/otel-lgtm:0.38.1'
     profiles: ["monitoring"]

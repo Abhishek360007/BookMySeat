@@ -15,7 +15,8 @@ import java.time.Duration;
 public class EmailConfig {
 
 	@Bean
-	public EmailSender emailSender(EmailProperties properties, ObjectProvider<JavaMailSender> mailSender) {
+	public EmailSender emailSender(EmailProperties properties, ObjectProvider<JavaMailSender> mailSender,
+			RestClient.Builder restClientBuilder) {
 		return switch (properties.provider()) {
 			case LOG -> new LoggingEmailSender();
 			case SMTP -> new SmtpEmailSender(mailSender.getObject(), properties);
@@ -26,7 +27,8 @@ public class EmailConfig {
 				SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
 				requestFactory.setConnectTimeout(Duration.ofSeconds(5));
 				requestFactory.setReadTimeout(Duration.ofSeconds(15));
-				yield new BrevoEmailSender(RestClient.builder().requestFactory(requestFactory), properties);
+				// Boot's builder: each Brevo call is a span in the trace that queued the email
+				yield new BrevoEmailSender(restClientBuilder.requestFactory(requestFactory), properties);
 			}
 		};
 	}

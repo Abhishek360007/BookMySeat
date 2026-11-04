@@ -15,13 +15,14 @@ public class RazorpayGateway implements PaymentGateway {
 
 	private final RestClient client;
 
-	public RazorpayGateway(PaymentProperties.Razorpay config) {
+	// builder: Boot's, so every call is a span in the request's trace
+	public RazorpayGateway(RestClient.Builder builder, PaymentProperties.Razorpay config) {
 		SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
 		requestFactory.setConnectTimeout(Duration.ofSeconds(5));
 		requestFactory.setReadTimeout(Duration.ofSeconds(15));
 		String credentials = Base64.getEncoder().encodeToString(
 				(config.keyId() + ":" + config.keySecret()).getBytes(StandardCharsets.UTF_8));
-		this.client = RestClient.builder()
+		this.client = builder
 				.baseUrl(config.baseUrl())
 				.requestFactory(requestFactory)
 				.defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + credentials)

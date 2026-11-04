@@ -1,13 +1,21 @@
 package com.abhishekraj.BookMySeat;
 
+import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpServer;
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import io.opentelemetry.proto.common.v1.KeyValue;
 import io.opentelemetry.proto.metrics.v1.Metric;
+import io.opentelemetry.proto.trace.v1.Span;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -16,7 +24,14 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -24,33 +39,38 @@ import java.util.zip.GZIPInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Metrics leave the app the way Grafana Cloud expects them: OTLP over HTTP, gzipped, with the auth header.
-// A tiny HTTP server stands in for the OTLP gateway.
-@SpringBootTest(properties = {
+// Metrics and traces leave the app the way Grafana Cloud expects them: OTLP over HTTP, gzipped, with the auth
+// header. A tiny HTTP server stands in for the OTLP gateway.
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 		"management.otlp.metrics.export.enabled=true",
 		"management.otlp.metrics.export.step=PT1S",
-		"management.otlp.metrics.export.headers.Authorization=Basic dGVzdDp0b2tlbg=="
+		"management.otlp.metrics.export.headers.Authorization=Basic dGVzdDp0b2tlbg==",
+		"management.tracing.export.otlp.enabled=true",
+		"management.opentelemetry.tracing.export.schedule-delay=PT0.2S",
+		"management.opentelemetry.tracing.export.otlp.headers.Authorization=Basic dGVzdDp0b2tlbg=="
 })
 @AutoConfigureMetrics // tests normally switch exporters off
+@AutoConfigureTracing
 @Import(TestcontainersConfig.class)
+@ExtendWith(OutputCaptureExtension.class)
 class OtlpExportTest {
 
-	record Received(String authorization, String encoding, byte[] body) {}
+	record Received(String authorization, String encoding, byte[] body) {
 
-	static final BlockingQueue<Received> received = new LinkedBlockingQueue<>();
+		InputStream unzipped() throws IOException {
+			return new GZIPInputStream(new ByteArrayInputStream(body));
+		}
+	}
+
+	static final BlockingQueue<Received> metricPushes = new LinkedBlockingQueue<>();
+	static final BlockingQueue<Received> tracePushes = new LinkedBlockingQueue<>();
 	static final HttpServer gateway = startGateway();
 
 	static HttpServer startGateway() {
 		try {
 			HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-			server.createContext("/otlp/v1/metrics", exchange -> {
-				try (InputStream body = exchange.getRequestBody()) {
-					received.add(new Received(exchange.getRequestHeaders().getFirst("Authorization"),
-							exchange.getRequestHeaders().getFirst("Content-Encoding"), body.readAllBytes()));
-				}
-				exchange.sendResponseHeaders(200, -1);
-				exchange.close();
-			});
+			server.createContext("/otlp/v1/metrics", exchange -> record(exchange, metricPushes));
+			server.createContext("/otlp/v1/traces", exchange -> record(exchange, tracePushes));
 			server.start();
 			return server;
 		} catch (IOException ex) {
@@ -58,10 +78,20 @@ class OtlpExportTest {
 		}
 	}
 
+	static void record(com.sun.net.httpserver.HttpExchange exchange, BlockingQueue<Received> into) throws IOException {
+		try (InputStream body = exchange.getRequestBody()) {
+			into.add(new Received(exchange.getRequestHeaders().getFirst("Authorization"),
+					exchange.getRequestHeaders().getFirst("Content-Encoding"), body.readAllBytes()));
+		}
+		exchange.sendResponseHeaders(200, -1);
+		exchange.close();
+	}
+
 	@DynamicPropertySource
 	static void gatewayUrl(DynamicPropertyRegistry registry) {
-		registry.add("management.otlp.metrics.export.url",
-				() -> "http://localhost:" + gateway.getAddress().getPort() + "/otlp/v1/metrics");
+		String base = "http://localhost:" + gateway.getAddress().getPort() + "/otlp";
+		registry.add("management.otlp.metrics.export.url", () -> base + "/v1/metrics");
+		registry.add("management.opentelemetry.tracing.export.otlp.endpoint", () -> base + "/v1/traces");
 	}
 
 	@AfterAll
@@ -69,17 +99,19 @@ class OtlpExportTest {
 		gateway.stop(0);
 	}
 
+	@LocalServerPort int port;
+
 	@Test
-	void pushesGzippedOtlpWithTheAuthHeader_includingBusinessMetrics() throws Exception {
+	void metrics_pushGzippedOtlpWithTheAuthHeader_includingBusinessMetrics() throws Exception {
 		// The first pushes can come before the JVM metrics are registered: wait for one that has them
 		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
 		Received push;
 		ExportMetricsServiceRequest request;
 		List<String> names;
 		do {
-			push = received.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+			push = metricPushes.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
 			assertThat(push).as("no OTLP push with JVM metrics within 30 s").isNotNull();
-			try (InputStream body = new GZIPInputStream(new ByteArrayInputStream(push.body()))) {
+			try (InputStream body = push.unzipped()) {
 				request = ExportMetricsServiceRequest.parseFrom(body);
 			}
 			names = request.getResourceMetricsList().stream()
@@ -91,7 +123,45 @@ class OtlpExportTest {
 		assertThat(push.authorization()).isEqualTo("Basic dGVzdDp0b2tlbg==");
 		assertThat(push.encoding()).isEqualTo("gzip");
 		assertThat(names).contains("emails.outbox.pending", "seat.holds"); // business metrics travel too
-		List<KeyValue> resource = request.getResourceMetrics(0).getResource().getAttributesList();
+		assertResource(request.getResourceMetrics(0).getResource().getAttributesList());
+	}
+
+	@Test
+	void traces_carryTheRequestId_skipHealthProbes_andTheTraceIdIsInTheLogLine(CapturedOutput output) throws Exception {
+		HttpClient http = HttpClient.newHttpClient();
+		http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/actuator/health")).build(),
+				HttpResponse.BodyHandlers.discarding());
+		HttpResponse<Void> shows = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/shows")).build(),
+				HttpResponse.BodyHandlers.discarding());
+		String requestId = shows.headers().firstValue("X-Request-Id").orElseThrow();
+
+		List<Span> spans = new ArrayList<>();
+		Optional<Span> server = Optional.empty();
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+		while (server.isEmpty()) {
+			Received push = tracePushes.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+			assertThat(push).as("no span for request " + requestId + " within 20 s").isNotNull();
+			assertThat(push.authorization()).isEqualTo("Basic dGVzdDp0b2tlbg==");
+			assertThat(push.encoding()).isEqualTo("gzip");
+			ExportTraceServiceRequest request;
+			try (InputStream body = push.unzipped()) {
+				request = ExportTraceServiceRequest.parseFrom(body);
+			}
+			assertResource(request.getResourceSpans(0).getResource().getAttributesList());
+			request.getResourceSpansList().forEach(r -> r.getScopeSpansList().forEach(s -> spans.addAll(s.getSpansList())));
+			server = spans.stream().filter(span -> requestId.equals(attribute(span, "request.id"))).findFirst();
+		}
+
+		assertThat(server.get().getKind()).isEqualTo(Span.SpanKind.SPAN_KIND_SERVER);
+		assertThat(attribute(server.get(), "uri")).isEqualTo("/api/shows");
+		// The probe was sent first, so its span would have been exported by now
+		assertThat(spans).noneSatisfy(span -> assertThat(span.getAttributesList())
+				.anySatisfy(a -> assertThat(a.getValue().getStringValue()).contains("/actuator")));
+		String traceId = hex(server.get().getTraceId());
+		assertThat(output.getAll()).containsPattern("\\[" + requestId + "] \\[trace " + traceId + "] .*GET /api/shows -> 200");
+	}
+
+	static void assertResource(List<KeyValue> resource) {
 		assertThat(resource).anySatisfy(attribute -> {
 			assertThat(attribute.getKey()).isEqualTo("service.name");
 			assertThat(attribute.getValue().getStringValue()).isEqualTo("BookMySeat");
@@ -99,5 +169,14 @@ class OtlpExportTest {
 			assertThat(attribute.getKey()).isEqualTo("deployment.environment.name");
 			assertThat(attribute.getValue().getStringValue()).isEqualTo("local");
 		});
+	}
+
+	static String attribute(Span span, String key) {
+		return span.getAttributesList().stream().filter(a -> a.getKey().equals(key))
+				.map(a -> a.getValue().getStringValue()).findFirst().orElse(null);
+	}
+
+	static String hex(ByteString id) {
+		return HexFormat.of().formatHex(id.toByteArray());
 	}
 }

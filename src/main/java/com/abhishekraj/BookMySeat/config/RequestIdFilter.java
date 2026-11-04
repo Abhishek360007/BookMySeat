@@ -4,12 +4,14 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import io.micrometer.common.KeyValue;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.filter.ServerHttpObservationFilter;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -17,10 +19,11 @@ import java.util.regex.Pattern;
 
 // Gives every request an id: in the X-Request-Id response header, in every log line (MDC "requestId")
 // and in every error body, so a reported error can be found in the logs. Runs before Spring Security,
-// so 401/403 responses get an id too.
+// so 401/403 responses get an id too, and just inside Boot's HTTP observation filter (HIGHEST_PRECEDENCE + 1):
+// the request's trace is already open, so the log line carries its traceId and the span gets the request id.
 @Slf4j
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 1)
+@Order(Ordered.HIGHEST_PRECEDENCE + 2)
 public class RequestIdFilter extends OncePerRequestFilter {
 
 	public static final String HEADER = "X-Request-Id";
@@ -38,6 +41,8 @@ public class RequestIdFilter extends OncePerRequestFilter {
 
 		MDC.put(MDC_KEY, requestId);
 		response.setHeader(HEADER, requestId);
+		ServerHttpObservationFilter.findObservationContext(request)
+				.ifPresent(context -> context.addHighCardinalityKeyValue(KeyValue.of("request.id", requestId)));
 		long start = System.nanoTime();
 		try {
 			chain.doFilter(request, response);
