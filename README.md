@@ -38,6 +38,7 @@
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
+- **Observability with OpenTelemetry:** metrics and traces go to Grafana Cloud over OTLP. A dashboard and alert rules live in the repo as files, and the alerts are unit-tested with `promtool` in CI. Every log line carries the request id and the trace id, and business counters only move once their transaction commits. See [Monitoring](#monitoring).
 - **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
 
 ## Architecture
@@ -424,7 +425,16 @@ Open **http://localhost:8080/swagger-ui.html**. To stop only the app container a
 
 Counters only move once their transaction commits, so a rolled-back confirm is never counted as a booking. Tags never contain user, show or seat ids, which keeps the number of distinct metrics small.
 
-**Logs:** every request is logged once (`GET /api/shows/2 -> 200 in 15 ms`) with its request id; health probes are skipped. Locally the id appears in brackets; in production (`prod` profile) each line is a JSON object in Elastic Common Schema, with `requestId` as a field.
+**Logs:** every request is logged once (`GET /api/shows/2 -> 200 in 15 ms`) with its request id and trace id; health probes are skipped. Locally they appear in brackets (`[3f2a…] [trace 4bf9…]`); in production (`prod` profile) each line is a JSON object in Elastic Common Schema, with `requestId` and `traceId` as fields.
+
+**Grafana Cloud (OpenTelemetry):** with `OTLP_ENABLED=true` the app sends metrics once a minute and every trace over OTLP, gzipped, to Grafana Cloud's free tier (about 600 series):
+
+- **Traces:** one per request, with spans for Spring Security, each Redis call, and the calls to Razorpay and Brevo. The server span carries `request.id`, so the id in an error body leads to the trace. Health probes create no traces.
+- **Dashboard:** [`monitoring/bookmyseat-dashboard.json`](monitoring/bookmyseat-dashboard.json): requests, errors, p95 latency, bookings and booking value, seats by category, holds and conflicts, check-ins, payments, refunds, the email outbox, JVM memory and CPU, database connections.
+- **Alerts:** [`monitoring/alerts.yaml`](monitoring/alerts.yaml): server errors, slow requests, a restart loop, an email backlog or given-up emails, a refund to do by hand, failing refunds, a nearly full heap. [`alerts.test.yaml`](monitoring/alerts.test.yaml) proves each one fires on a bad case and stays quiet on a normal one, and CI runs it.
+- **Counting across restarts:** the free instance sleeps after 15 idle minutes, and each wake-up starts the counters again. Business counters exist at 0 from startup, and the dashboard's totals count a series that is new in the range from 0. There is no "app is down" alert, because missing metrics are normal while it sleeps.
+
+Locally, `docker compose --profile monitoring up -d lgtm` starts the same stack (Grafana, Prometheus, Tempo) in one container. [`monitoring/README.md`](monitoring/README.md) covers importing the dashboard and alerts, and the counting rules.
 
 ## Deployment
 
@@ -435,6 +445,7 @@ The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1)
 | App | **Render** web service, built from this repo's `Dockerfile` | 512 MB RAM, 0.1 CPU; sleeps after 15 minutes without traffic |
 | Database | **Neon** PostgreSQL 18 | Direct (non-pooled) connection over TLS; Flyway migrates it on startup |
 | Holds | **Upstash** Redis | TLS (`rediss://`); the Lua hold/release scripts run unchanged |
+| Monitoring | **Grafana Cloud** | Metrics and traces over OTLP (`ap-south-1` gateway), dashboard and alerts from [`monitoring/`](monitoring/) |
 
 **Continuous deployment:**
 
@@ -448,7 +459,7 @@ flowchart LR
 
 The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER_DEPLOY_HOOK_URL`), so only a commit whose tests, coverage and Docker build are all green reaches production.
 
-**Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, plus the payment and email variables above. No secrets are in the repo, and production uses its own JWT secret.
+**Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, plus the payment and email variables above and `OTLP_ENABLED` / `OTLP_ENDPOINT` / `OTLP_AUTHORIZATION` for Grafana Cloud. No secrets are in the repo, and production uses its own JWT secret.
 
 **Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download. On Render, waking from sleep went from about 197 s to about 125 s.
 
@@ -494,8 +505,11 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
 | Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V14) applies to an empty database |
+| HTTP (MockMvc + Testcontainers) | `BusinessMetricsTest` | Seats by category, booking value, cancellations by customer or show, counters at 0 from startup, nothing counted for a rolled-back transaction, outbox gauges |
+| Integration (real HTTP + fake OTLP gateway) | `OtlpExportTest` | Metrics and traces arrive gzipped with the auth header and resource attributes; the request's span carries its request id, health probes make none, the log line has the trace id |
+| Rules (`promtool`, in CI) | [`monitoring/alerts.test.yaml`](monitoring/alerts.test.yaml) | Each alert fires on a bad case and stays quiet on a normal one, including the first event after a restart |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 79% of branches** across 128 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 81% of branches** across 135 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -515,6 +529,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 14:** password reset and change, Content-Security-Policy and security headers, Dependabot and CodeQL
 - [x] **Week 15:** e-tickets: signed QR codes in the app and the confirmation email, a camera check-in page that lets each ticket in once
 - [x] **Week 16:** seat categories (Regular / Premium / Recliner) with their own prices, aisles, per-seat totals that keep their snapshot
+- [x] **Week 17:** monitoring with OpenTelemetry and Grafana Cloud: metrics and traces over OTLP, request and trace ids in every log line, a dashboard and `promtool`-tested alert rules kept in the repo
 
 ## Author
 
