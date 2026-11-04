@@ -39,7 +39,7 @@
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
 - **Observability with OpenTelemetry:** metrics and traces go to Grafana Cloud over OTLP. A dashboard and alert rules live in the repo as files, and the alerts are unit-tested with `promtool` in CI. Every log line carries the request id and the trace id, and business counters only move once their transaction commits. See [Monitoring](#monitoring).
-- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a CDS archive that halves cold-start time.
+- **Production-ready extras:** paginated admin reports, Actuator health and business metrics, a request id on every response and log line, JSON logs in production, and a layered, non-root Docker image with a Java 25 AOT cache that starts it about twice as fast as without one.
 
 ## Architecture
 
@@ -463,9 +463,23 @@ The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER
 
 **Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, plus the payment and email variables above and `OTLP_ENABLED` / `OTLP_ENDPOINT` / `OTLP_AUTHORIZATION` for Grafana Cloud. No secrets are in the repo, and production uses its own JWT secret.
 
-**Faster cold starts with CDS:** the Docker build does a training run that starts the app and saves every loaded class into a Class Data Sharing archive (`app.jsa`). At 0.1 CPU, startup dropped from 175 s to 92 s (measured locally with the same 512 MB / 0.1 CPU limits), at the cost of 32 MB more to download. On Render, waking from sleep went from about 197 s to about 125 s.
+**Faster cold starts with Java 25's AOT cache:** the Docker build does a training run that starts the app as far as a ready Spring context, and Java saves the loaded and linked classes plus method profiles into an AOT cache (`app.aot`, JEP 483/514/515). It replaced the Class Data Sharing archive from Week 7. Each variant was started twice in a local container with Render's limits (512 MB, 0.1 CPU):
 
-**Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
+| Startup | Ready after | First `/api/shows` |
+|---|---|---|
+| Java 21 + CDS (until Week 17) | 119 s, 122 s | 4.7 to 5.6 s |
+| Java 25 + CDS | 113 s, 124 s | 5.2 to 5.6 s |
+| **Java 25 + AOT cache** | **98 s, 102 s** | 4.3 to 4.9 s |
+| Java 25, no cache | 181 s, 190 s | about 5.4 s |
+
+The cache adds 43 MB to the image. Two details stop a cache from being silently ignored, or worse, from stopping the JVM:
+
+- **Same JVM options:** the training run uses the same JVM options as production, and `-XX:MaxRAM=512m` sizes its heap as on the instance rather than from the build machine's RAM.
+- **Initial heap:** `-Xms32m` in the `ENTRYPOINT` is needed because Serial GC copies the cached objects into the heap at startup. With the default 8 MB initial heap the JVM refuses to start (`Unable to use AOT cache`).
+
+CI starts the image's real `ENTRYPOINT` in 512 MB with `-XX:AOTMode=on`, so a cache the JVM can't use fails the build instead of the deploy.
+
+**Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` (set in the image, and the same on Render) keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU. C1 only (`TieredStopAtLevel=1`) also limits what the cached method profiles can do, since they mainly help the C2 compiler; on one slow CPU, skipping C2 is still the better trade.
 
 **Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats (a premium row, a recliner row and a centre aisle), and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
 
