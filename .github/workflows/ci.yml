@@ -28,6 +28,13 @@ jobs:
           docker run --rm -v "$PWD/monitoring:/rules" -w /rules --entrypoint promtool prom/prometheus:v3.15.1 \
             test rules alerts.test.yaml
           python3 -m json.tool monitoring/bookmyseat-dashboard.json > /dev/null
+      # The wake-up start page (docs/, GitHub Pages) against a fake app that is awake, asleep, deploying or down
+      - name: Start page browser test
+        run: |
+          npm i --no-save --silent --prefix /tmp/pw playwright@1.64.1
+          (cd /tmp/pw && npx playwright install --with-deps chromium > /dev/null)
+          cp e2e/start-page.mjs /tmp/pw/
+          cd /tmp/pw && DOCS="$GITHUB_WORKSPACE/docs" node start-page.mjs
       # Coverage table on the run's summary page, plus the full HTML report as a downloadable artifact
       - name: Coverage summary
         run: python3 .github/scripts/coverage_summary.py >> "$GITHUB_STEP_SUMMARY"
