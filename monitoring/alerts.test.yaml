@@ -156,6 +156,48 @@ tests:
         alertname: BookMySeatRefundsFailing
         exp_alerts: []
 
+  # Requests wait for a connection for 3 minutes: fires after 2; a single short wait doesn't
+  - interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_pending{job="BookMySeat",pool="HikariPool-1"}'
+        values: '0 0 0 0 0 2 3 2 2 1 0 0 0 0 1 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: BookMySeatConnectionPoolExhausted
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: BookMySeatConnectionPoolExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Requests are waiting for a database connection"
+              description: "2 request(s) waited for a free connection for 2 minutes: all 5 are in use. Look in Tempo for long `connection` spans with short queries inside (work done in a transaction that doesn't need the database)."
+      - eval_time: 15m
+        alertname: BookMySeatConnectionPoolExhausted
+        exp_alerts: []
+
+  # One timeout fires at once; ten quiet minutes later it clears
+  - interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_timeout_total{job="BookMySeat",pool="HikariPool-1"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: BookMySeatConnectionTimeouts
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: BookMySeatConnectionTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Requests failed: no free database connection"
+              description: "1 request(s) in 10 minutes gave up waiting for a connection and failed. Check the pool on the dashboard and Neon's status."
+      - eval_time: 25m
+        alertname: BookMySeatConnectionTimeouts
+        exp_alerts: []
+
   # 95% of the heap for 15 minutes; the -1 "no limit" pool is left out of the maximum
   - interval: 1m
     input_series:

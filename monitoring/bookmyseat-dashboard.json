@@ -1225,7 +1225,7 @@
     },
     {
       "type": "row",
-      "title": "JVM and resources",
+      "title": "Database",
       "id": 26,
       "collapsed": false,
       "gridPos": {
@@ -1238,7 +1238,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Heap",
+      "title": "Query time",
       "id": 27,
       "datasource": {
         "type": "prometheus",
@@ -1249,6 +1249,309 @@
         "w": 8,
         "x": 0,
         "y": 57
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(jdbc_query_milliseconds_sum{job=\"BookMySeat\"}[$__rate_interval])) / sum(rate(jdbc_query_milliseconds_count{job=\"BookMySeat\"}[$__rate_interval]))",
+          "legendFormat": "query avg"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(jdbc_query_max_milliseconds{job=\"BookMySeat\"})",
+          "legendFormat": "query max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "Time per SQL statement made by a request (Neon is in the same region; the jobs' polling isn't counted)"
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection held per use",
+      "id": 28,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 57
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(hikaricp_connections_usage_milliseconds_sum{job=\"BookMySeat\"}[$__rate_interval])) / sum(rate(hikaricp_connections_usage_milliseconds_count{job=\"BookMySeat\"}[$__rate_interval]))",
+          "legendFormat": "held avg"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(hikaricp_connections_usage_max_milliseconds{job=\"BookMySeat\"})",
+          "legendFormat": "held max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "How long a request keeps a pooled connection. Well above the query time means work inside a transaction that doesn't need the database (a login once held one through its 1.3 s password check)"
+    },
+    {
+      "type": "timeseries",
+      "title": "Waiting for a connection",
+      "id": 29,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 57
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(hikaricp_connections_acquire_milliseconds_sum{job=\"BookMySeat\"}[$__rate_interval])) / sum(rate(hikaricp_connections_acquire_milliseconds_count{job=\"BookMySeat\"}[$__rate_interval]))",
+          "legendFormat": "wait avg"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(hikaricp_connections_acquire_max_milliseconds{job=\"BookMySeat\"})",
+          "legendFormat": "wait max"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(hikaricp_connections_pending{job=\"BookMySeat\"})",
+          "legendFormat": "requests waiting"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "Above zero means the pool (5 connections in production) was all in use"
+    },
+    {
+      "type": "timeseries",
+      "title": "Queries per minute",
+      "id": 30,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum (rate(jdbc_query_milliseconds_count{job=\"BookMySeat\"}[$__rate_interval])) * 60",
+          "legendFormat": "queries"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Connection timeouts",
+      "id": 31,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum ((increase(hikaricp_connections_timeout_total{job=\"BookMySeat\"}[$__range]) and hikaricp_connections_timeout_total{job=\"BookMySeat\"} offset $__range) or last_over_time(hikaricp_connections_timeout_total{job=\"BookMySeat\"}[$__range]))",
+          "legendFormat": "timeouts",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true
+      },
+      "description": "Requests that gave up waiting for a free connection (they failed)"
+    },
+    {
+      "type": "row",
+      "title": "JVM and resources",
+      "id": 32,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap",
+      "id": 33,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 74
       },
       "targets": [
         {
@@ -1299,7 +1602,7 @@
     {
       "type": "timeseries",
       "title": "CPU",
-      "id": 28,
+      "id": 34,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1308,7 +1611,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 57
+        "y": 74
       },
       "targets": [
         {
@@ -1359,7 +1662,7 @@
     {
       "type": "timeseries",
       "title": "Database connections",
-      "id": 29,
+      "id": 35,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1368,7 +1671,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 57
+        "y": 74
       },
       "targets": [
         {
@@ -1428,7 +1731,7 @@
     {
       "type": "timeseries",
       "title": "Uptime",
-      "id": 30,
+      "id": 36,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1437,7 +1740,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 65
+        "y": 82
       },
       "targets": [
         {
@@ -1480,7 +1783,7 @@
     {
       "type": "timeseries",
       "title": "Log warnings and errors per minute",
-      "id": 31,
+      "id": 37,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1489,7 +1792,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 65
+        "y": 82
       },
       "targets": [
         {
@@ -1531,7 +1834,7 @@
     {
       "type": "timeseries",
       "title": "Redis commands per minute",
-      "id": 32,
+      "id": 38,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1540,7 +1843,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 65
+        "y": 82
       },
       "targets": [
         {
@@ -1582,7 +1885,7 @@
     {
       "type": "stat",
       "title": "Last start",
-      "id": 33,
+      "id": 39,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1591,7 +1894,7 @@
         "h": 6,
         "w": 4,
         "x": 0,
-        "y": 73
+        "y": 90
       },
       "targets": [
         {
@@ -1646,7 +1949,7 @@
     {
       "type": "stat",
       "title": "Processes",
-      "id": 34,
+      "id": 40,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1655,7 +1958,7 @@
         "h": 6,
         "w": 4,
         "x": 4,
-        "y": 73
+        "y": 90
       },
       "targets": [
         {
@@ -1702,7 +2005,7 @@
     {
       "type": "timeseries",
       "title": "Time until ready, per start",
-      "id": 35,
+      "id": 41,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1711,7 +2014,7 @@
         "h": 6,
         "w": 16,
         "x": 8,
-        "y": 73
+        "y": 90
       },
       "targets": [
         {

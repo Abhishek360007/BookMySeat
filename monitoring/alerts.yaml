@@ -78,6 +78,23 @@ groups:
           summary: "Refunds keep failing"
           description: "{{ $value }} refund attempts failed in 30 minutes. The job retries them, but customers are waiting for their money: check Razorpay's status and API keys."
 
+      - alert: BookMySeatConnectionPoolExhausted
+        expr: max(hikaricp_connections_pending{job="BookMySeat"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests are waiting for a database connection"
+          description: "{{ $value }} request(s) waited for a free connection for 2 minutes: all 5 are in use. Look in Tempo for long `connection` spans with short queries inside (work done in a transaction that doesn't need the database)."
+
+      - alert: BookMySeatConnectionTimeouts
+        expr: sum(increase(hikaricp_connections_timeout_total{job="BookMySeat"}[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Requests failed: no free database connection"
+          description: "{{ $value }} request(s) in 10 minutes gave up waiting for a connection and failed. Check the pool on the dashboard and Neon's status."
+
       - alert: BookMySeatHeapNearlyFull
         expr: |
           sum(jvm_memory_used_bytes{job="BookMySeat",area="heap"})
