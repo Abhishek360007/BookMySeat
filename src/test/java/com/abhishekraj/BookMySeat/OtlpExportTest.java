@@ -135,10 +135,51 @@ class OtlpExportTest {
 				HttpResponse.BodyHandlers.discarding());
 		String requestId = shows.headers().firstValue("X-Request-Id").orElseThrow();
 
-		List<Span> spans = new ArrayList<>();
-		Optional<Span> server = Optional.empty();
+		Span server = awaitServerSpan(requestId);
+
+		assertThat(server.getKind()).isEqualTo(Span.SpanKind.SPAN_KIND_SERVER);
+		assertThat(attribute(server, "uri")).isEqualTo("/api/shows");
+		// The probe was sent first, so its span would have been exported by now
+		assertThat(spans).noneSatisfy(span -> assertThat(span.getAttributesList())
+				.anySatisfy(a -> assertThat(a.getValue().getStringValue()).contains("/actuator")));
+		String traceId = hex(server.getTraceId());
+		assertThat(output.getAll()).containsPattern("\\[" + requestId + "] \\[trace " + traceId + "] .*GET /api/shows -> 200");
+	}
+
+	@Test
+	void databaseQueries_areSpansInTheRequestsTrace_withoutParameterValues() throws Exception {
+		String email = "claude-trace-" + System.nanoTime() + "@example.com";
+		HttpResponse<Void> login = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/auth/login"))
+						.header("Content-Type", "application/json")
+						.POST(HttpRequest.BodyPublishers.ofString("{\"email\":\"" + email + "\",\"password\":\"Not-The-Password-1\"}")).build(),
+				HttpResponse.BodyHandlers.discarding());
+		assertThat(login.statusCode()).isEqualTo(401); // the user lookup still ran
+		Span server = awaitServerSpan(login.headers().firstValue("X-Request-Id").orElseThrow());
+
+		List<Span> trace = spans.stream().filter(span -> span.getTraceId().equals(server.getTraceId())).toList();
+		assertThat(trace).anySatisfy(span -> {
+			assertThat(span.getName()).isEqualTo("connection"); // taken from the Hikari pool
+			assertThat(span.getKind()).isEqualTo(Span.SpanKind.SPAN_KIND_CLIENT);
+		}).anySatisfy(span -> {
+			assertThat(span.getName()).isEqualTo("query");
+			assertThat(span.getKind()).isEqualTo(Span.SpanKind.SPAN_KIND_CLIENT);
+			assertThat(attribute(span, "jdbc.query[0]")).contains("from users").endsWith("email=?");
+		});
+		// The address was a query parameter: it must not be in any span
+		assertThat(trace).noneSatisfy(span -> assertThat(span.getAttributesList())
+				.anySatisfy(a -> assertThat(a.getValue().getStringValue()).contains(email)));
+	}
+
+	// Every span exported so far (trace pushes are shared by the tests)
+	static final List<Span> spans = new ArrayList<>();
+
+	static Span awaitServerSpan(String requestId) throws Exception {
 		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-		while (server.isEmpty()) {
+		while (true) {
+			Optional<Span> server = spans.stream().filter(span -> requestId.equals(attribute(span, "request.id"))).findFirst();
+			if (server.isPresent()) {
+				return server.get();
+			}
 			Received push = tracePushes.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
 			assertThat(push).as("no span for request " + requestId + " within 20 s").isNotNull();
 			assertThat(push.authorization()).isEqualTo("Basic dGVzdDp0b2tlbg==");
@@ -149,16 +190,7 @@ class OtlpExportTest {
 			}
 			assertResource(request.getResourceSpans(0).getResource().getAttributesList());
 			request.getResourceSpansList().forEach(r -> r.getScopeSpansList().forEach(s -> spans.addAll(s.getSpansList())));
-			server = spans.stream().filter(span -> requestId.equals(attribute(span, "request.id"))).findFirst();
 		}
-
-		assertThat(server.get().getKind()).isEqualTo(Span.SpanKind.SPAN_KIND_SERVER);
-		assertThat(attribute(server.get(), "uri")).isEqualTo("/api/shows");
-		// The probe was sent first, so its span would have been exported by now
-		assertThat(spans).noneSatisfy(span -> assertThat(span.getAttributesList())
-				.anySatisfy(a -> assertThat(a.getValue().getStringValue()).contains("/actuator")));
-		String traceId = hex(server.get().getTraceId());
-		assertThat(output.getAll()).containsPattern("\\[" + requestId + "] \\[trace " + traceId + "] .*GET /api/shows -> 200");
 	}
 
 	static void assertResource(List<KeyValue> resource) {
