@@ -49,7 +49,8 @@ public class AuthService {
 		return UserResponse.from(saved);
 	}
 
-	@Transactional // not read-only: it stores a new refresh token
+	// Deliberately not @Transactional: BCrypt takes ~1.5 s on a 0.1 CPU, and inside a transaction that time holds a
+	// database connection (5 logins at once would use up the pool). The lookup and issue() each take one briefly.
 	public LoginResponse login(LoginRequest request) {
 		String email = request.email().trim().toLowerCase(Locale.ROOT);
 		User user = userRepository.findByEmail(email)
