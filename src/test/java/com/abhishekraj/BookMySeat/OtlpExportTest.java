@@ -47,7 +47,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 		"management.otlp.metrics.export.headers.Authorization=Basic dGVzdDp0b2tlbg==",
 		"management.tracing.export.otlp.enabled=true",
 		"management.opentelemetry.tracing.export.schedule-delay=PT0.2S",
-		"management.opentelemetry.tracing.export.otlp.headers.Authorization=Basic dGVzdDp0b2tlbg=="
+		"management.opentelemetry.tracing.export.otlp.headers.Authorization=Basic dGVzdDp0b2tlbg==",
+		// The jobs poll the database every 2 s here, so their (unwanted) spans would show up in the tests
+		"email.outbox.initial-delay=PT1S", "email.outbox.interval=PT2S",
+		"payments.maintenance.initial-delay=PT1S", "payments.maintenance.interval=PT2S"
 })
 @AutoConfigureMetrics // tests normally switch exporters off
 @AutoConfigureTracing
@@ -168,6 +171,20 @@ class OtlpExportTest {
 		// The address was a query parameter: it must not be in any span
 		assertThat(trace).noneSatisfy(span -> assertThat(span.getAttributesList())
 				.anySatisfy(a -> assertThat(a.getValue().getStringValue()).contains(email)));
+	}
+
+	@Test
+	void idleJobRuns_andQueriesOutsideARequest_makeNoTraces() throws Exception {
+		// A request after a few job runs: once its span is exported, so are any spans the jobs made before it
+		Thread.sleep(6000);
+		HttpResponse<Void> shows = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/shows")).build(), HttpResponse.BodyHandlers.discarding());
+		awaitServerSpan(shows.headers().firstValue("X-Request-Id").orElseThrow());
+
+		assertThat(spans).noneSatisfy(span -> assertThat(span.getName()).startsWith("tasks"));
+		// A query span with no parent would be a one-span trace of its own (startup, polling jobs)
+		assertThat(spans).filteredOn(span -> span.getName().equals("query") || span.getName().equals("connection"))
+				.allSatisfy(span -> assertThat(span.getParentSpanId()).as("parent of " + span.getName()).isNotEmpty());
 	}
 
 	// Every span exported so far (trace pushes are shared by the tests)
