@@ -11,9 +11,7 @@
 ### 🚀 [Live demo: book a seat](https://abhishek360007.github.io/BookMySeat/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
 ### 🎬 [Watch the 2-minute demo video](https://abhishek360007.github.io/BookMySeat/demo/) (captioned walkthrough, plays instantly)
 
-The demo runs on a free server that sleeps after 15 idle minutes: the link opens a small start page that shows the wake-up (about 2 minutes) and then opens the app, or goes straight through if it's awake. [Direct link](https://bookmyseat-8j1e.onrender.com/).
-
-> Free tier: the first load after a quiet period can take **about 2 minutes** while the app wakes up (if the first page shows an error, refresh it). After that it responds in about a second.
+> Free tier: the app sleeps after 15 idle minutes and takes **about 2 minutes** to wake up. The demo link opens a small start page that shows the wake-up and opens the app as soon as it's ready, or straight away if it's awake ([direct link](https://bookmyseat-8j1e.onrender.com/)). After that it responds in about a second.
 
 **Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`, or click **Use the demo account** in the app. Pick seats on "Dune: Part Three", hold them and book. Please don't use a real password if you register your own account.
 
