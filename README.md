@@ -439,6 +439,8 @@ Locally, `docker compose --profile monitoring up -d lgtm` starts the same stack 
 
 ![Grafana Cloud dashboard with live production data: requests, errors, latency, bookings, seats by category and check-ins](docs/screenshots/grafana-dashboard.png)
 
+![The dashboard's Database row with live production data: query time, how long a connection is held and waited for, queries per minute and connection timeouts](docs/screenshots/grafana-database.png)
+
 ## Deployment
 
 The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1) to keep latency low:
