@@ -8,8 +8,10 @@
 
 **Movie ticket booking API that guarantees one booking per seat under concurrent load.**
 
-### 🚀 [Live demo: book a seat](https://bookmyseat-8j1e.onrender.com/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
+### 🚀 [Live demo: book a seat](https://abhishek360007.github.io/BookMySeat/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
 ### 🎬 [Watch the 2-minute demo video](https://abhishek360007.github.io/BookMySeat/demo/) (captioned walkthrough, plays instantly)
+
+The demo runs on a free server that sleeps after 15 idle minutes: the link opens a small start page that shows the wake-up (about 2 minutes) and then opens the app, or goes straight through if it's awake. [Direct link](https://bookmyseat-8j1e.onrender.com/).
 
 > Free tier: the first load after a quiet period can take **about 2 minutes** while the app wakes up (if the first page shows an error, refresh it). After that it responds in about a second.
 
