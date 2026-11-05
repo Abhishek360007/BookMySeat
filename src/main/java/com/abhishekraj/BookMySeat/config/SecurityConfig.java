@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -18,6 +19,11 @@ import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 public class SecurityConfig {
@@ -44,9 +50,26 @@ public class SecurityConfig {
 	// camera=(self): the admin check-in page scans tickets; no other site embedded here may use it
 	static final String PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), usb=()";
 
+	/**
+	 * The start page on GitHub Pages waits for the app to wake up (a free Render instance sleeps after 15 idle minutes)
+	 * by reading the liveness probe. That one public GET is the only thing another site may read: every other path
+	 * keeps the browser's same-origin rule.
+	 */
 	@Bean
-	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+	CorsConfigurationSource startPageCors(@Value("${app.start-page-origin}") String startPageOrigin) {
+		CorsConfiguration liveness = new CorsConfiguration();
+		liveness.setAllowedOrigins(List.of(startPageOrigin));
+		liveness.setAllowedMethods(List.of("GET"));
+		liveness.setMaxAge(600L);
+		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		source.registerCorsConfiguration("/actuator/health/liveness", liveness);
+		return source;
+	}
+
+	@Bean
+	public SecurityFilterChain securityFilterChain(HttpSecurity http, CorsConfigurationSource startPageCors) throws Exception {
 		http
+			.cors(cors -> cors.configurationSource(startPageCors))
 			// No cookies: the API authenticates with a Bearer header, which another site can't make a browser send
 			.csrf(csrf -> csrf.disable())
 			.headers(headers -> headers

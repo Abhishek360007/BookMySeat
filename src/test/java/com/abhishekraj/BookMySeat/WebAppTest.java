@@ -50,6 +50,23 @@ class WebAppTest {
 		mvc.perform(get("/favicon.svg")).andExpect(status().isOk());
 	}
 
+	// The wake-up start page on GitHub Pages reads the liveness probe across origins, and nothing else
+	@Test
+	void startPage_mayReadTheLivenessProbe_only() throws Exception {
+		String pages = "https://abhishek360007.github.io";
+		mvc.perform(get("/actuator/health/liveness").header("Origin", pages))
+				.andExpect(status().isOk())
+				.andExpect(header().string("Access-Control-Allow-Origin", pages))
+				.andExpect(jsonPath("$.status").value("UP"));
+		mvc.perform(get("/actuator/health/liveness").header("Origin", "https://evil.example"))
+				.andExpect(status().isForbidden())
+				.andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+		mvc.perform(get("/api/shows").header("Origin", pages))
+				.andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+		mvc.perform(get("/actuator/health").header("Origin", pages))
+				.andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+	}
+
 	@Test
 	void configIsPublic_andPaymentsAreOffByDefault() throws Exception {
 		mvc.perform(get("/api/config"))
