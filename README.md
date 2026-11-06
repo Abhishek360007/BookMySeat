@@ -454,7 +454,7 @@ The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1)
 
 **Start page for the sleeping demo:** the free instance sleeps after 15 idle minutes, and the first visitor would stare at a blank page for 2 to 3 minutes. The demo link therefore opens [`docs/index.html`](docs/index.html) on GitHub Pages, which loads instantly. It asks the app's liveness probe, the one path another origin may read (CORS for the Pages address only), and opens the app as soon as it answers `UP`; a Render error page during a deploy doesn't count. If the app is awake, that takes under a second. Measured live after 17 idle minutes: the start page was there in 1.3 s, showed the wake-up with progress, and opened the running app after 170 s, with no errors.
 
-<img src="docs/screenshots/start-page.png" alt="The start page while the demo wakes up: a progress bar, 0:36 elapsed, usually 2 to 3 minutes, a link to the demo video and a direct link" width="420">
+<img src="docs/screenshots/start-page.png" alt="The start page while the demo wakes up: a progress bar, 0:36 elapsed, a link to the demo video and a direct link" width="420">
 
 **Continuous deployment:**
 
@@ -527,7 +527,7 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | Browser (Playwright, in CI) | [`e2e/start-page.mjs`](e2e/start-page.mjs) | The wake-up start page against a fake app that is awake (straight through), asleep (wait screen, progress, live status), deploying (Render error pages don't count) and down (clear failure, focused retry); phone width, dark mode, no JavaScript errors or CSP violations |
 | Rules (`promtool`, in CI) | [`monitoring/alerts.test.yaml`](monitoring/alerts.test.yaml) | Each alert fires on a bad case and stays quiet on a normal one, including the first event after a restart |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 81% of branches** across 138 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 81% of branches** across 139 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -550,6 +550,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 17:** monitoring with OpenTelemetry and Grafana Cloud: metrics and traces over OTLP, request and trace ids in every log line, a dashboard and `promtool`-tested alert rules kept in the repo
 - [x] **Week 18:** cold starts on the dashboard (each Render wake-up shows its time until ready); Java 25 with its AOT cache measured (about 100 s instead of 120 s at 0.1 CPU) and parked, the project stays on Java 21
 - [x] **Week 19:** database spans in every trace (SQL without parameter values, no traces for idle job polling); they showed a login holding its connection through BCrypt, now 0.1 to 0.3 s instead of 1.5 to 1.9 s; a Database row and connection-pool alerts on the dashboard
+- [x] **Week 20:** a start page on GitHub Pages for the sleeping demo: it loads instantly, shows the 2 to 3 minute wake-up with progress, and opens the app once its liveness probe (the one path readable cross-origin) says `UP`; tested against a fake app in every state, in CI, and measured live
 
 ## Author
 
