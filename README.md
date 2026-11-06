@@ -11,7 +11,7 @@
 ### 🚀 [Live demo: book a seat](https://abhishek360007.github.io/BookMySeat/) · [API docs (Swagger)](https://bookmyseat-8j1e.onrender.com/swagger-ui/index.html)
 ### 🎬 [Watch the 2-minute demo video](https://abhishek360007.github.io/BookMySeat/demo/) (captioned walkthrough, plays instantly)
 
-> Free tier: the app sleeps after 15 idle minutes and takes **about 2 minutes** to wake up. The demo link opens a small start page that shows the wake-up and opens the app as soon as it's ready, or straight away if it's awake ([direct link](https://bookmyseat-8j1e.onrender.com/)). After that it responds in about a second.
+> Free tier: the app sleeps after 15 idle minutes and takes **2 to 3 minutes** to wake up. The demo link opens a small start page that shows the wake-up and opens the app as soon as it's ready, or straight away if it's awake ([direct link](https://bookmyseat-8j1e.onrender.com/)). After that it responds in about a second.
 
 **Demo login** (role `USER`): `demo@bookmyseat.dev` / `DemoPass123`, or click **Use the demo account** in the app. Pick seats on "Dune: Part Three", hold them and book. Please don't use a real password if you register your own account.
 
@@ -451,6 +451,10 @@ The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1)
 | Database | **Neon** PostgreSQL 18 | Direct (non-pooled) connection over TLS; Flyway migrates it on startup |
 | Holds | **Upstash** Redis | TLS (`rediss://`); the Lua hold/release scripts run unchanged |
 | Monitoring | **Grafana Cloud** | Metrics and traces over OTLP (`ap-south-1` gateway), dashboard and alerts from [`monitoring/`](monitoring/) |
+
+**Start page for the sleeping demo:** the free instance sleeps after 15 idle minutes, and the first visitor would stare at a blank page for 2 to 3 minutes. The demo link therefore opens [`docs/index.html`](docs/index.html) on GitHub Pages, which loads instantly. It asks the app's liveness probe, the one path another origin may read (CORS for the Pages address only), and opens the app as soon as it answers `UP`; a Render error page during a deploy doesn't count. If the app is awake, that takes under a second. Measured live after 17 idle minutes: the start page was there in 1.3 s, showed the wake-up with progress, and opened the running app after 170 s, with no errors.
+
+<img src="docs/screenshots/start-page.png" alt="The start page while the demo wakes up: a progress bar, 0:36 elapsed, usually 2 to 3 minutes, a link to the demo video and a direct link" width="420">
 
 **Continuous deployment:**
 

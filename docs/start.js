@@ -1,11 +1,11 @@
 // Opens the demo, waking its free server first if it is asleep. A sleeping Render instance holds the first request
-// until the app has started (about 2 minutes), so the page keeps asking the liveness probe and forwards to the app
+// until the app has started (2 to 3 minutes), so the page keeps asking the liveness probe and forwards to the app
 // once it answers UP. The app's address comes only from data-app on <body>: no parameter can send visitors elsewhere.
 'use strict';
 
 const APP = document.body.dataset.app;
 const LIVENESS = new URL('actuator/health/liveness', APP).href;
-const EXPECTED_SECONDS = 140; // measured cold starts on Render: 125 to 140 s
+const EXPECTED_SECONDS = 160; // measured: the app starts in 125 to 140 s, through Render's wake-up 166 s
 const GIVE_UP_SECONDS = Number(document.body.dataset.giveUp || 300); // shortened only by the browser test
 const QUICK_CHECK_MS = 2500;  // an awake app answers well within this
 const ATTEMPT_MS = 60000;     // one held request; if it times out, ask again
@@ -48,7 +48,7 @@ function tick() {
 	$('elapsed').textContent = `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 	say(seconds < 20 ? 'Waking up the server.'
 		: seconds < 100 ? 'Starting the app and connecting to the database.'
-			: seconds < 170 ? 'Almost there.'
+			: seconds < 200 ? 'Almost there.'
 				: 'This is taking longer than usual, still trying.');
 }
 
