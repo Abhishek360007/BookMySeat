@@ -35,6 +35,7 @@
 - **Emails through a transactional outbox:** booking confirmed / cancelled / refunded emails and an optional email-verification link are stored in the same transaction as the change, then delivered with retries. A rolled-back booking never sends an email, and a provider outage never loses one.
 - **Admin dashboard:** sales per show in a fixed number of queries, one form for venue + show + seat map, and booking-aware editing: a show with bookings can't change venue, a new time emails every customer, and cancelling a show refunds and emails everyone. A row lock stops a cancel and a payment from overlapping (a test fails without it).
 - **E-tickets with QR check-in:** every booking gets an HMAC-signed ticket code, shown as a QR code in the web app and attached to the confirmation email. Staff scan it at the door with a phone camera; it gets in exactly once, even with 10 scanners reading it at the same moment.
+- **Waitlist for sold-out shows:** customers join the line for 1 to 6 seats. When a booking is cancelled, the freed seats are held in Redis for the first person whose request fits, for 15 minutes, before the cancel even commits, so nobody can grab them in between. They get an email, book the seats like any other held seats, and an offer that runs out or is declined goes to the next person. See [Waitlist](#waitlist).
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
 - **Price snapshots and a cancellation cutoff:** a booking stores its total at booking time, and cancelling closes 2 hours before the show.
@@ -208,9 +209,42 @@ sequenceDiagram
 | How does the door scan? | The admin **Check-in** page uses the phone camera through the browser's `BarcodeDetector` (Chrome and Edge on Android); any browser can type the code instead. The result fills the screen in green or red |
 | How does the email get the ticket? | The outbox stores the QR PNG with the email (V13), so a retry sends exactly what was queued with the booking, over SMTP or Brevo |
 
+## Waitlist
+
+When every seat of a show is booked (or held), the seat map offers **Join waitlist** for 1 to 6 seats. Seats that come free go to the line in order, as an offer: they are held for that person for 15 minutes (never past the show's start) and they get an email with a link. The show page then opens with those seats held and a countdown, so booking them (or paying for them) is the usual confirm.
+
+```mermaid
+sequenceDiagram
+    participant B as Buyer
+    participant A as App
+    participant R as Redis
+    participant W as First in line (wants 2)
+    B->>A: cancel booking (A1, A2)
+    A->>A: seats AVAILABLE, find the first WAITING entry whose 2 seats fit
+    A->>R: hold A1, A2 for W, 15 min (before commit)
+    A->>A: entry OFFERED + offer email in the outbox, then commit
+    A-->>W: "Seats for you" email
+    W->>A: open the show: A1, A2 held, 14:59 left
+    W->>A: confirm (or pay): booked, off the waitlist
+```
+
+<img src="docs/screenshots/waitlist-offer.png" alt="Show page with seats A1 and A2 held from the waitlist and a 14:51 countdown" width="68%">
+
+| Question | Answer |
+|---|---|
+| Who gets freed seats? | The earliest person in line whose request fits: someone waiting for 3 seats is skipped (not split) when 2 come free, and the next person who wants 1 or 2 gets them |
+| Can someone else grab them first? | No. The hold is set in Redis inside the cancel transaction, while the seats are still `BOOKED` for everyone else, and it is removed again if that transaction rolls back (tested) |
+| Two cancellations at once? | Offers for one show run one at a time, under a Postgres advisory lock held until commit, so the second sees whom the first offered to. The first version locked the waiting rows with `SKIP LOCKED` instead; a test of two simultaneous cancellations showed the first one locking the whole line, so the second offered nobody anything |
+| What if they don't book? | A job (ShedLock, every minute) ends the offer when its time is up, and the seats go to the next person. Declining (leaving the waitlist), or booking only some of the offered seats, passes the rest on at once |
+| Seats freed without a cancellation? | The same job offers any seat that is free and held by no one to the line: a customer's hold that ran out, or a declined offer. That's why a show counts as sold out for joining when every seat is booked **or held** |
+| Can an offer be cut short? | No. A hold is never shortened by holding the same seats again (the hold script keeps the longer time), and a payment started in time keeps its seats after the offer ends |
+| Show cancelled or started? | Cancelling closes the line and emails everyone in it; a show that starts closes its line quietly |
+| Redis down? | Offers need holds, so none are made, but the customer's cancellation still succeeds and the job makes the offer once Redis is back (tested) |
+| Counted? | `waitlist.joined` and `waitlist.offers` by result: `offered`, `claimed`, `expired`, `declined`, `closed` |
+
 ## Emails
 
-Booking confirmed, booking cancelled, refund completed, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
+Booking confirmed, booking cancelled, refund completed, waitlist offer and waitlist closed, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
 
 ```mermaid
 flowchart LR
@@ -312,6 +346,9 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/payments/webhook` | Razorpay | Server-to-server payment events, authenticated by `X-Razorpay-Signature` |
 | POST | `/api/bookings/{id}/cancel` | User | Cancel, up to 2 hours before the show |
 | GET | `/api/bookings/{id}/ticket`, `/api/bookings/{id}/ticket.png` | User | Your e-ticket: signed code and details, or its QR code image |
+| POST | `/api/waitlist` | User | Join the waitlist of a sold-out show: `{showId, seats}` (1 to 6), once per show |
+| DELETE | `/api/waitlist/{showId}` | User | Leave the waitlist (with an offer: decline it; the seats go to the next person) |
+| GET | `/api/waitlist/me` | User | Your places in line: `WAITING` with your position, or `OFFERED` with the held seats and when the offer ends |
 | POST | `/api/admin/check-in` | Admin | Check a ticket in at the door (`showId` + scanned `code`); once only |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
 | GET | `/api/admin/shows/{showId}/bookings?status=&page=&size=&sort=` | Admin | Paginated bookings for a show (default `CONFIRMED`, newest first, max 100 per page) |
@@ -366,6 +403,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Safe confirm | Every confirm sends an `Idempotency-Key`, so a double click or a retry can't book twice |
+| Waitlist | A sold-out show offers **Join waitlist** (1 to 6 seats) and then shows your place in line; an offer appears within one refresh as held seats with a countdown, to book or **Decline**. My bookings lists your places in line |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
 | Admin pages | Dashboard, new show form and a page per show for admins (see [Admin dashboard](#admin-dashboard)) |
@@ -375,7 +413,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Email verification | A reminder banner with **Send it again** until the email is confirmed; the `#/verify/...` page removes the one-time token from the address bar |
 | Phones and dark mode | Responsive down to 360 px wide; follows the system light/dark setting |
 
-**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
+**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. [`e2e/waitlist-flow.mjs`](e2e/waitlist-flow.mjs) builds a sold-out show, joins its waitlist in the browser, cancels the booking and waits for the offer to appear on the page with its countdown (and in Mailpit), books it, then gives a second person an offer that they decline. All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
 
 ```powershell
 # app running on port 8080 with the demo data (scripts/seed-demo.ps1)
@@ -415,6 +453,7 @@ Open **http://localhost:8080/swagger-ui.html**. To stop only the app container a
 | `bookings.revenue` | none | Value of confirmed bookings in rupees (what was paid, for online payments) |
 | `bookings.cancelled` | `by` = `customer` / `show` | Cancellations; `show` = an admin cancelled the whole show |
 | `seat.holds` | `result` = `success` / `conflict` | Hold attempts, including lost hold races |
+| `waitlist.joined`, `waitlist.offers` | `result` = `offered` / `claimed` / `expired` / `declined` / `closed` | People joining a waitlist, and offers of freed seats and how each one ended |
 | `booking.conflicts` | `reason` = `hold_missing` / `already_booked` / `lock_lost` | Why confirms were rejected; `lock_lost` is an optimistic-lock race lost at commit |
 | `payments` | `outcome` = `confirmed` / `refund` / `expired` / `attempt_failed` | What happened to Razorpay orders |
 | `refunds` | `outcome` = `refunded` / `retry` / `manual` | Refund requests; `manual` = an extra payment Razorpay refused to refund, to do from its dashboard |
@@ -516,18 +555,19 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | HTTP (MockMvc + Testcontainers) | `TicketApiTest` | The owner's ticket and a QR that decodes back to the same code; someone else's is 404, a cancelled one 409 |
 | HTTP (MockMvc + Testcontainers) | `CheckInApiTest` | In once, then `ALREADY_CHECKED_IN`; forged codes, other show, cancelled, door window; 10 scanners at once let it in exactly once |
 | HTTP (MockMvc + Testcontainers) | `SeatCategoryApiTest` | Rows from the back become recliners then premium, prices per category, aisles, invalid layouts, totals that add each seat's price and survive price and layout changes |
-| HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database and login still works |
+| HTTP (MockMvc + Testcontainers) | `WaitlistApiTest` | Joining only when sold out and once per show (also 6 joins at once), places in line, offers to the first request that fits, a rolled-back cancel leaving no offer or hold, two cancels at once offering to two people (repeated 5 times), expiry, decline and partial booking passing seats on, a hold running out, closed lines |
+| HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database, login still works, and a customer can still cancel (the waitlist offer waits) |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V14) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V15) applies to an empty database |
 | HTTP (MockMvc + Testcontainers) | `BusinessMetricsTest` | Seats by category, booking value, cancellations by customer or show, counters at 0 from startup, nothing counted for a rolled-back transaction, outbox gauges |
 | HTTP (MockMvc + Testcontainers) | `LoginConnectionTest` | The password check runs with no transaction open, so a login doesn't hold a database connection during BCrypt |
 | Integration (real HTTP + fake OTLP gateway) | `OtlpExportTest` | Metrics and traces arrive gzipped with the auth header and resource attributes; the request's span carries its request id, its database queries are spans with `?` instead of parameter values, health probes make none, the log line has the trace id |
 | Browser (Playwright, in CI) | [`e2e/start-page.mjs`](e2e/start-page.mjs) | The wake-up start page against a fake app that is awake (straight through), asleep (wait screen, progress, live status), deploying (Render error pages don't count) and down (clear failure, focused retry); phone width, dark mode, no JavaScript errors or CSP violations |
 | Rules (`promtool`, in CI) | [`monitoring/alerts.test.yaml`](monitoring/alerts.test.yaml) | Each alert fires on a bad case and stays quiet on a normal one, including the first event after a restart |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 81% of branches** across 139 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 80% of branches** across 154 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -551,6 +591,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 18:** cold starts on the dashboard (each Render wake-up shows its time until ready); Java 25 with its AOT cache measured (about 100 s instead of 120 s at 0.1 CPU) and parked, the project stays on Java 21
 - [x] **Week 19:** database spans in every trace (SQL without parameter values, no traces for idle job polling); they showed a login holding its connection through BCrypt, now 0.1 to 0.3 s instead of 1.5 to 1.9 s; a Database row and connection-pool alerts on the dashboard
 - [x] **Week 20:** a start page on GitHub Pages for the sleeping demo: it loads instantly, shows the 2 to 3 minute wake-up with progress, and opens the app once its liveness probe (the one path readable cross-origin) says `UP`; tested against a fake app in every state, in CI, and measured live
+- [x] **Week 21:** a waitlist for sold-out shows: freed seats are held for the first person whose request fits (15 minutes, set before the cancel commits), offered by email, passed on when an offer runs out or is declined; a test of simultaneous cancellations replaced a row lock with a per-show advisory lock; a browser test of the whole flow
 
 ## Author
 
