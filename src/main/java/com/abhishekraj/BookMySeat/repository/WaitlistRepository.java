@@ -2,13 +2,9 @@ package com.abhishekraj.BookMySeat.repository;
 
 import com.abhishekraj.BookMySeat.entity.WaitlistEntry;
 import com.abhishekraj.BookMySeat.entity.WaitlistStatus;
-import jakarta.persistence.LockModeType;
-import jakarta.persistence.QueryHint;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.jpa.repository.QueryHints;
 
 import java.time.Instant;
 import java.util.Collection;
@@ -28,14 +24,13 @@ public interface WaitlistRepository extends JpaRepository<WaitlistEntry, Long> {
 			  and e.status = com.abhishekraj.BookMySeat.entity.WaitlistStatus.WAITING""")
 	long countWaitingAhead(Long showId, Long entryId);
 
-	// The line of a show, in order, FOR UPDATE SKIP LOCKED (timeout -2): two cancellations at once each offer
-	// to different people, instead of both offering to the first one (or one waiting for the other)
-	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
-	@Query("""
-			select e from WaitlistEntry e where e.show.id = :showId
-			  and e.status = com.abhishekraj.BookMySeat.entity.WaitlistStatus.WAITING order by e.id""")
-	List<WaitlistEntry> lockWaitingLine(Long showId);
+	// One offer round per show at a time (a transaction-scoped Postgres advisory lock, released at commit): two
+	// cancellations at once offer one after the other, so the second sees whom the first offered to. Not the show's
+	// row lock, which a show cancellation takes before its bookings (a customer cancel would take them the other way).
+	@Query(value = "select 1 from (select pg_advisory_xact_lock(21, cast(:showId as integer))) as locked", nativeQuery = true)
+	Integer lockOffersOf(Long showId);
+
+	List<WaitlistEntry> findByShowIdAndStatusOrderByIdAsc(Long showId, WaitlistStatus status);
 
 	List<WaitlistEntry> findByShowIdAndStatusIn(Long showId, Collection<WaitlistStatus> statuses);
 

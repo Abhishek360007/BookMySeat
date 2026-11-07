@@ -10,9 +10,12 @@ import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import com.abhishekraj.BookMySeat.repository.WaitlistRepository;
 import com.abhishekraj.BookMySeat.service.BookingService;
+import com.abhishekraj.BookMySeat.service.WaitlistOffers;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,6 +23,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -44,7 +48,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// The waitlist of a sold-out show: joining, leaving, and offers of seats freed by cancellations. Same configuration as BookingApiTest (shared Spring context).
+// The waitlist of a sold-out show: joining, leaving, offers of seats that come free, and how offers end. Same configuration as BookingApiTest (shared Spring context).
 @SpringBootTest(properties = {
 		"app.admin.email=api-test-admin@example.com",
 		"app.admin.password=Api-Test-Admin-Pw-1",
@@ -66,6 +70,9 @@ class WaitlistApiTest {
 	@Autowired OutboxEmailRepository outboxRepository;
 	@Autowired BookingService bookingService;
 	@Autowired PlatformTransactionManager transactionManager;
+	@Autowired WaitlistOffers offers;
+	@Autowired MeterRegistry meterRegistry;
+	@Autowired JdbcTemplate jdbc;
 
 	String admin;
 	long showId;
@@ -241,7 +248,7 @@ class WaitlistApiTest {
 		assertThat(outboxRepository.findAll()).noneMatch(e -> e.getKind().equals("WAITLIST_OFFER"));
 	}
 
-	@Test
+	@RepeatedTest(5)
 	void twoCancellationsAtOnce_offerToTwoDifferentPeople() throws Exception {
 		List<Integer> seats = seats(2);
 		String buyer = registerAndLogin("waitlist-buyer5@example.com");
@@ -275,7 +282,100 @@ class WaitlistApiTest {
 		assertThat(List.of(offeredToA.getFirst(), offeredToB.getFirst())).containsExactlyInAnyOrderElementsOf(seats);
 	}
 
+	@Test
+	void anOfferThatRunsOut_goesToTheNextPersonInLine() throws Exception {
+		List<Integer> seats = seats(1);
+		String buyer = registerAndLogin("waitlist-buyer6@example.com");
+		int bookingId = book(buyer, seats.get(0));
+		String slow = registerAndLogin("waitlist-slow@example.com");
+		String next = registerAndLogin("waitlist-next@example.com");
+		join(slow, 1).andExpect(status().isCreated());
+		join(next, 1).andExpect(status().isCreated());
+		cancel(buyer, bookingId);
+		mine(slow).andExpect(jsonPath("$[0].status").value("OFFERED"));
+		double expiredBefore = offerCount("expired");
+
+		// 15 minutes later: the offer's time is up and Redis has dropped its hold
+		jdbc.update("update waitlist_entries set offer_expires_at = now() - interval '1 second' where status = 'OFFERED'");
+		redis.delete("hold:show:" + showId + ":seat:" + seats.get(0));
+		offers.sweep();
+
+		mine(slow).andExpect(jsonPath("$").isEmpty());
+		mine(next).andExpect(jsonPath("$[0].status").value("OFFERED"))
+				.andExpect(jsonPath("$[0].offeredSeatIds[0]").value(seats.get(0)));
+		assertThat(redis.opsForValue().get("hold:show:" + showId + ":seat:" + seats.get(0)))
+				.isEqualTo(String.valueOf(userRepository.findByEmail("waitlist-next@example.com").orElseThrow().getId()));
+		assertThat(offerCount("expired")).isEqualTo(expiredBefore + 1);
+	}
+
+	@Test
+	void decliningAnOffer_orBookingFewerSeats_passesTheRestOnAtOnce() throws Exception {
+		List<Integer> seats = seats(2);
+		String buyer = registerAndLogin("waitlist-buyer7@example.com");
+		int bookingId = book(buyer, seats.get(0), seats.get(1));
+		String decliner = registerAndLogin("waitlist-decliner@example.com");
+		String partial = registerAndLogin("waitlist-partial@example.com");
+		String last = registerAndLogin("waitlist-last@example.com");
+		join(decliner, 2).andExpect(status().isCreated());
+		join(partial, 2).andExpect(status().isCreated());
+		join(last, 1).andExpect(status().isCreated());
+		cancel(buyer, bookingId);
+		mine(decliner).andExpect(jsonPath("$[0].status").value("OFFERED"));
+
+		mvc.perform(delete("/api/waitlist/" + showId).header("Authorization", "Bearer " + decliner)).andExpect(status().isNoContent());
+		mine(partial).andExpect(jsonPath("$[0].status").value("OFFERED")).andExpect(jsonPath("$[0].offeredSeatIds", hasSize(2)));
+
+		// They book only one of the two: the other is released and offered to the next who fits
+		mvc.perform(post("/api/bookings").header("Authorization", "Bearer " + partial).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"showId\":" + showId + ",\"seatIds\":[" + seats.get(0) + "]}")).andExpect(status().isCreated());
+		mine(last).andExpect(jsonPath("$[0].status").value("OFFERED")).andExpect(jsonPath("$[0].offeredSeatIds[0]").value(seats.get(1)));
+	}
+
+	@Test
+	void aHeldSeatThatComesFree_withoutACancellation_goesToTheLine() throws Exception {
+		List<Integer> seats = seats(1);
+		String holder = registerAndLogin("waitlist-holder@example.com");
+		String waiting = registerAndLogin("waitlist-patient@example.com");
+		hold(holder, seats.get(0)).andExpect(status().isCreated());
+		join(waiting, 1).andExpect(status().isCreated()); // held by someone = sold out for now
+
+		redis.delete("hold:show:" + showId + ":seat:" + seats.get(0)); // they never paid: the hold ran out
+		offers.sweep();
+		mine(waiting).andExpect(jsonPath("$[0].status").value("OFFERED"));
+	}
+
+	@Test
+	void aCancelledShow_closesItsLineAndTellsEveryone_aStartedShow_closesItQuietly() throws Exception {
+		List<Integer> seats = seats(1);
+		String buyer = registerAndLogin("waitlist-buyer8@example.com");
+		book(buyer, seats.get(0));
+		String waiting = registerAndLogin("waitlist-closed@example.com");
+		join(waiting, 1).andExpect(status().isCreated());
+
+		adminCall(post("/api/shows/" + showId + "/cancel"), "").andExpect(status().isOk());
+		mine(waiting).andExpect(jsonPath("$").isEmpty());
+		assertThat(outboxRepository.findAll()).filteredOn(e -> e.getKind().equals("WAITLIST_CLOSED")).singleElement()
+				.satisfies(e -> assertThat(e.getRecipient()).isEqualTo("waitlist-closed@example.com"));
+
+		// Another sold-out show that simply starts: the sweep closes its line, no email
+		long otherShow = showId;
+		setUp();
+		List<Integer> others = seats(1);
+		book(buyer, others.get(0));
+		join(waiting, 1).andExpect(status().isCreated());
+		jdbc.update("update shows set start_time = now() - interval '1 minute' where id = ?", showId);
+		offers.sweep();
+		mine(waiting).andExpect(jsonPath("$").isEmpty());
+		assertThat(waitlistRepository.findAll()).extracting(e -> e.getStatus()).containsOnly(WaitlistStatus.CLOSED);
+		assertThat(outboxRepository.findAll()).filteredOn(e -> e.getKind().equals("WAITLIST_CLOSED")).hasSize(1);
+		assertThat(otherShow).isNotEqualTo(showId);
+	}
+
 	// ---- helpers ----
+
+	double offerCount(String result) {
+		return meterRegistry.counter("waitlist.offers", "result", result).count();
+	}
 
 	List<Integer> seats(int count) throws Exception {
 		adminCall(post("/api/shows/" + showId + "/seats"), "{\"rows\":1,\"seatsPerRow\":" + count + "}").andExpect(status().isCreated());

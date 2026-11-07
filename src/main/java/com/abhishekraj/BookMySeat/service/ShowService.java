@@ -135,6 +135,7 @@ public class ShowService {
 			booking.cancel();
 			events.publishEvent(new BookingCancelledEvent(booking.getId(), true));
 		}
+		events.publishEvent(new ShowCancelledEvent(id)); // e.g. close its waitlist
 		return new ShowCancelResponse(id, bookings.size());
 	}
 

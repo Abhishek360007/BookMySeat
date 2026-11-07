@@ -13,6 +13,7 @@ import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.WaitlistRepository;
+import com.abhishekraj.BookMySeat.support.AfterCommit;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,7 @@ public class WaitlistService {
 	private final UserRepository userRepository;
 	private final SeatHoldService seatHoldService;
 	private final WaitlistMetrics metrics;
+	private final WaitlistOffers offers;
 	private final Clock clock;
 
 	@Transactional
@@ -74,10 +76,19 @@ public class WaitlistService {
 		return WaitlistResponse.from(entry, position(entry));
 	}
 
+	/** Leaving with an offer declines it: the held seats go to the next person in line right away. */
 	@Transactional
 	public void leave(Long userId, Long showId) {
 		WaitlistEntry entry = waitlistRepository.findByShowIdAndUserIdAndStatusIn(showId, userId, ACTIVE)
 				.orElseThrow(() -> new ResourceNotFoundException("You are not on the waitlist for show " + showId));
+		if (entry.getStatus() == WaitlistStatus.OFFERED) {
+			List<Long> offered = entry.getOfferedSeats().stream().map(Seat::getId).toList();
+			metrics.offerEnded(WaitlistStatus.LEFT);
+			AfterCommit.run(() -> {
+				seatHoldService.releaseAll(showId, offered, userId);
+				offers.offerFreeSeats(showId);
+			});
+		}
 		entry.end(WaitlistStatus.LEFT, Instant.now(clock));
 	}
 

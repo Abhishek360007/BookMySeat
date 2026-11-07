@@ -16,6 +16,8 @@ import com.abhishekraj.BookMySeat.support.AfterCommit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -76,14 +78,21 @@ public class WaitlistOffers {
 		this.newTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 	}
 
-	/** A customer cancelled: their seats go to the line first (a cancelled show's line is closed instead, see 21.3). */
+	/** A customer cancelled: their seats go to the line first (a cancelled show's line is closed instead). */
 	@EventListener
 	public void onBookingCancelled(BookingCancelledEvent event) {
 		if (event.showCancelled()) {
 			return;
 		}
-		bookingRepository.findById(event.bookingId())
-				.ifPresent(booking -> offer(booking.getShow(), booking.getSeats()));
+		bookingRepository.findById(event.bookingId()).ifPresent(booking -> {
+			try {
+				offer(booking.getShow(), booking.getSeats());
+			} catch (RedisConnectionFailureException | RedisSystemException redisDown) {
+				// Holds live in Redis: without it there is no offer, but the cancellation still goes through
+				// (the sweep offers the seats once Redis is back)
+				log.warn("Redis unavailable: seats of cancelled booking {} not offered to the waitlist yet", booking.getId());
+			}
+		});
 	}
 
 	/**
@@ -115,6 +124,49 @@ public class WaitlistOffers {
 		});
 	}
 
+	/** The whole show was cancelled: its line is closed, and everyone still in it is told. */
+	@EventListener
+	public void onShowCancelled(ShowCancelledEvent event) {
+		Instant now = Instant.now(clock);
+		for (WaitlistEntry entry : waitlistRepository.findByShowIdAndStatusIn(event.showId(), WaitlistService.ACTIVE)) {
+			close(entry, now);
+			outbox.enqueue("WAITLIST_CLOSED", templates.waitlistClosed(entry));
+		}
+	}
+
+	/**
+	 * The sweep job's work, each part in its own transaction: offers that ran out end (EXPIRED), lines of shows that
+	 * were cancelled or have started close, and every seat that is free and held by no one goes to the line. That
+	 * last part also covers seats freed without a cancellation: an expired or declined offer, a customer's hold
+	 * running out, seats added by the venue.
+	 */
+	public void sweep() {
+		Instant now = Instant.now(clock);
+		newTransaction.executeWithoutResult(status -> {
+			// The hold ends by itself at the same moment (its TTL is the offer); it isn't removed here, so a payment
+			// that started in time still owns its seats (checkout extends the hold for the payment window)
+			for (WaitlistEntry entry : waitlistRepository.findTop50ByStatusAndOfferExpiresAtBefore(WaitlistStatus.OFFERED, now)) {
+				entry.end(WaitlistStatus.EXPIRED, now);
+				metrics.offerEnded(WaitlistStatus.EXPIRED);
+			}
+		});
+		newTransaction.executeWithoutResult(status -> {
+			for (WaitlistEntry entry : waitlistRepository.findActiveOfEndedShows(WaitlistService.ACTIVE, now)) {
+				close(entry, now);
+			}
+		});
+		for (Long showId : waitlistRepository.findShowIdsWithWaiting(now)) {
+			offerFreeSeats(showId);
+		}
+	}
+
+	private void close(WaitlistEntry entry, Instant now) {
+		if (entry.getStatus() == WaitlistStatus.OFFERED) {
+			metrics.offerEnded(WaitlistStatus.CLOSED);
+		}
+		entry.end(WaitlistStatus.CLOSED, now);
+	}
+
 	/**
 	 * In its own transaction: offers every seat of the show that is free and held by no one to the line.
 	 * Used after an offer ends early, and by the sweep job. Never throws (the next sweep tries again).
@@ -144,12 +196,13 @@ public class WaitlistOffers {
 		}
 		Instant expiresAt = now.plus(claimWindow).isBefore(show.getStartTime()) ? now.plus(claimWindow) : show.getStartTime();
 
+		waitlistRepository.lockOffersOf(show.getId()); // until this transaction ends
 		List<Seat> free = new ArrayList<>(seats.stream().sorted(Comparator.comparing(Seat::getId)).toList());
 		Set<Long> heldByAnyone = seatHoldService.findHeldSeatIds(show.getId(), free.stream().map(Seat::getId).toList());
 		free.removeIf(seat -> heldByAnyone.contains(seat.getId()));
 
 		int offered = 0;
-		for (WaitlistEntry entry : free.isEmpty() ? List.<WaitlistEntry>of() : waitlistRepository.lockWaitingLine(show.getId())) {
+		for (WaitlistEntry entry : free.isEmpty() ? List.<WaitlistEntry>of() : waitlistRepository.findByShowIdAndStatusOrderByIdAsc(show.getId(), WaitlistStatus.WAITING)) {
 			if (free.isEmpty()) {
 				break;
 			}

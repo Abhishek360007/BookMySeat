@@ -247,6 +247,26 @@ public class EmailTemplates {
 		return new EmailMessage(user.getEmail(), subject, text, html);
 	}
 
+	/** The show was cancelled while this person was on its waitlist. */
+	public EmailMessage waitlistClosed(WaitlistEntry entry) {
+		Show show = entry.getShow();
+		User user = entry.getUser();
+		String subject = "Show cancelled: " + show.getTitle();
+		String text = """
+				Hi %s,
+
+				We're sorry: %s (%s) has been cancelled, so its waitlist is closed. You don't need to do anything.
+
+				Other shows: %s
+				""".formatted(user.getName(), show.getTitle(), when(show.getStartTime()), url(""));
+		String html = layout("Show cancelled", """
+				<p>Hi %s,</p>
+				<p>We're sorry: <b>%s</b> (%s) has been cancelled, so its waitlist is closed. You don't need to do anything.</p>
+				%s""".formatted(esc(user.getName()), esc(show.getTitle()), when(show.getStartTime()),
+				button("Find another show", url(""))));
+		return new EmailMessage(user.getEmail(), subject, text, html);
+	}
+
 	String layout(String heading, String body) {
 		return """
 				<!doctype html>
