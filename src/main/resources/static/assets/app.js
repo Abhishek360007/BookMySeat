@@ -105,8 +105,18 @@ async function logout() {
 
 // ---------- UI helpers ----------
 
+/** Tells screen reader users about a change they can't see where they are: politely, or (errors) right away. */
+function announce(message, kind = 'info') {
+	const region = document.getElementById(kind === 'error' ? 'announce-alert' : 'announce');
+	region.textContent = '';
+	// A new text node a moment later: the same message twice in a row is announced twice
+	setTimeout(() => { region.textContent = message; }, 50);
+}
+
 function toast(message, kind = 'info') {
+	announce(message, kind);
 	const el = document.createElement('div');
+	el.setAttribute('aria-hidden', 'true'); // announced above; the toast itself is for the eyes
 	el.className = `toast ${kind === 'error' ? 'error' : ''}`;
 	el.textContent = message;
 	document.getElementById('toasts').append(el);
@@ -273,14 +283,20 @@ async function renderShow(showId) {
 	let wait = null; // your place on this show's waitlist: { status, position, seats, offeredSeatIds, ... }
 
 	// A waitlist offer means the seats are already held for you: the page goes on as if you had just held them
-	const loadWait = async () => {
+	const loadWait = async (whileHere = false) => {
 		if (!state.user) { wait = null; return; }
 		const mine = await api('/api/waitlist/me', { auth: true }).catch(() => []);
 		wait = mine.find((e) => e.showId === Number(showId)) ?? null;
 		if (wait?.status === 'OFFERED' && !hold) {
 			hold = { seatIds: wait.offeredSeatIds, seatNumbers: wait.offeredSeatNumbers, expiresAt: wait.offerExpiresAt,
 				idempotencyKey: uuid(), offer: true };
+			// An offer that arrives while you're on the page changes the summary below the seat map: say so
+			if (whileHere) announce(`From the waitlist: seats ${hold.seatNumbers.join(', ')} are held for you. ${minutesLeft()} to book them.`);
 		}
+	};
+	const minutesLeft = () => {
+		const minutes = Math.max(1, Math.round((new Date(hold.expiresAt) - Date.now()) / 60_000));
+		return `${minutes} minute${minutes > 1 ? 's' : ''}`;
 	};
 	const soldOut = () => !seats.some((s) => s.status === 'AVAILABLE');
 	await loadWait();
@@ -416,7 +432,7 @@ async function renderShow(showId) {
 			if (seats.find((s) => s.id === id)?.status !== 'AVAILABLE') selected.delete(id);
 		}
 		// While you wait, an offer shows up here within one poll
-		if (!hold && state.user && (wait || soldOut())) await loadWait();
+		if (!hold && state.user && (wait || soldOut())) await loadWait(true);
 		draw();
 	};
 
@@ -426,6 +442,11 @@ async function renderShow(showId) {
 		const left = Math.max(0, Math.round((new Date(hold.expiresAt) - Date.now()) / 1000));
 		el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
 		el.classList.toggle('low', left < 60);
+		// The countdown itself is silent (it changes every second); one warning near the end
+		if (left <= 60 && left > 0 && !hold.warned) {
+			hold.warned = true;
+			announce(`One minute left to ${hold.offer ? 'book the seats offered to you' : 'confirm your seats'}.`);
+		}
 		if (left === 0) {
 			toast(hold.offer ? 'Your waitlist offer expired; the seats went to the next person in line.'
 				: 'Your hold expired; the seats were released.', 'error');
@@ -449,6 +470,7 @@ async function renderShow(showId) {
 			hold = { ...response, idempotencyKey: uuid() };
 			selected.clear();
 			await reload();
+			announce(`Seats ${hold.seatNumbers.join(', ')} are held for you for ${minutesLeft()}.`);
 		});
 	}
 

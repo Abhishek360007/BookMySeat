@@ -60,6 +60,9 @@
 		</form>
 	</dialog>
 
-	<div id="toasts" class="toasts" aria-live="assertive"></div>
+	<div id="toasts" class="toasts"></div>
+	<!-- What screen readers announce: there from the start (a live region added later is often missed), errors interrupt -->
+	<div class="sr-only" id="announce" role="status"></div>
+	<div class="sr-only" id="announce-alert" role="alert"></div>
 </body>
 </html>

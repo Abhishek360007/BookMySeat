@@ -69,6 +69,18 @@ async function audit(page, name, ready) {
 				? `: ${result.violations.map((v) => v.id).join(', ')}` : ''}`);
 		}
 	}
+	// Reflow (WCAG 1.4.10): at 320 px wide nothing makes the page scroll sideways (the seat map may scroll on its own)
+	await page.setViewportSize({ width: 320, height: 640 });
+	await page.waitForTimeout(300);
+	const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+	checked++;
+	console.log(`${wide > 0 ? 'FAIL' : 'PASS'}  ${name} (320 px wide)${wide > 0 ? `: ${wide}px too wide` : ''}`);
+	if (wide > 0) {
+		const entry = found.get('reflow-320px') ?? { impact: 'serious', help: 'Content must fit 320 CSS px without scrolling sideways',
+			url: 'https://www.w3.org/WAI/WCAG22/Understanding/reflow.html', where: new Map() };
+		entry.where.set(name, [`${wide}px too wide`]);
+		found.set('reflow-320px', entry);
+	}
 	await page.setViewportSize(SCREENS.desktop.viewport);
 	await page.emulateMedia({ colorScheme: 'light' });
 	await page.screenshot({ path: `${OUT}/a11y-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png` });

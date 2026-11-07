@@ -1,7 +1,8 @@
 // End-to-end keyboard test: books seats with the keyboard only (no mouse clicks) and checks where focus goes on the way.
 // The skip link, focus on the new page's heading after moving to another page, the seat map as one Tab stop with arrow
 // keys (a booked seat is reachable and announced as booked), focus that survives the 10-second refresh of the seat
-// map, the login dialog, and focus on the summary and then on "You're booked!".
+// map, the login dialog, and focus on the summary and then on "You're booked!". Also what screen readers are told about
+// the hold, reduced motion and forced colours (Windows High Contrast).
 // Builds its own show through the API, so it needs an admin account (ADMIN_EMAIL / ADMIN_PASSWORD). Logs in 3 times.
 // Run with:
 //   docker run --rm -v "${PWD}/e2e:/e2e" -e BASE_URL=http://host.docker.internal:8080 -e ADMIN_EMAIL=... -e ADMIN_PASSWORD=... \
@@ -120,6 +121,24 @@ try {
 	await page.waitForFunction(() => document.activeElement.textContent.trim().startsWith('Confirm booking'));
 	check(true, 'after logging in and holding, focus is on "Confirm booking"');
 	check((await page.locator('#summary').innerText()).includes('A3, B3'), 'A3 and B3 are held');
+	await page.waitForFunction(() => document.getElementById('announce').textContent.includes('held for you'));
+	check(/^Seats A3, B3 are held for you for [45] minutes\.$/.test(await page.locator('#announce').textContent()),
+		`screen readers hear about the hold (${await page.locator('#announce').textContent()})`);
+	check(await page.locator('#timer').getAttribute('aria-live') === null, 'the ticking countdown is not announced every second');
+
+	// Less motion: no transitions; forced colours: a held-for-you seat differs from a free one without background colours
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	check(await page.locator('#confirm').evaluate((el) => getComputedStyle(el).transitionDuration) === '0s',
+		'with reduced motion, buttons have no transitions');
+	await page.emulateMedia({ forcedColors: 'active' });
+	const look = (name) => page.locator(`[aria-label^="${name}"]`).evaluate((el) => {
+		const s = getComputedStyle(el);
+		return `${s.borderTopStyle} ${s.borderTopWidth} ${s.borderTopColor} ${s.color}`;
+	});
+	const [mine, free, booked] = [await look('Seat A3'), await look('Seat A1'), await look('Seat A2')];
+	check(new Set([mine, free, booked]).size === 3, `in forced colours, held-for-you, free and booked seats look different (${mine} / ${free} / ${booked})`);
+	await page.screenshot({ path: `${OUT}/kb-04-forced-colors.png` });
+	await page.emulateMedia({ forcedColors: 'none', reducedMotion: 'no-preference' });
 	await page.screenshot({ path: `${OUT}/kb-03-held.png` });
 	await page.keyboard.press('Enter');
 	await page.getByRole('heading', { name: "You're booked!" }).waitFor();
