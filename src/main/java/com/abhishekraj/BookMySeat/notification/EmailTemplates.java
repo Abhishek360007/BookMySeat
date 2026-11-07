@@ -5,6 +5,7 @@ import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.User;
+import com.abhishekraj.BookMySeat.entity.WaitlistEntry;
 import com.abhishekraj.BookMySeat.ticket.QrCodes;
 import com.abhishekraj.BookMySeat.ticket.TicketCodes;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,7 @@ import java.util.stream.Collectors;
 public class EmailTemplates {
 
 	private static final DateTimeFormatter SHOW_TIME = DateTimeFormatter.ofPattern("EEE d MMM yyyy, h:mm a", Locale.ENGLISH);
+	private static final DateTimeFormatter SHOW_TIME_OF_DAY = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
 
 	private final EmailProperties properties;
 	private final TicketCodes ticketCodes;
@@ -216,6 +218,33 @@ public class EmailTemplates {
 				<p style="color:#646779">Banks usually show the money within 5-7 working days.</p>""".formatted(
 				esc(payment.getUser().getName()), esc(reason), money(payment.getAmount()), esc(payment.getRefundId())));
 		return new EmailMessage(payment.getUser().getEmail(), subject, text, html);
+	}
+
+	/** Seats came free for a sold-out show and are held for this person until the offer expires. */
+	public EmailMessage waitlistOffer(WaitlistEntry entry) {
+		Show show = entry.getShow();
+		User user = entry.getUser();
+		String seats = entry.getOfferedSeats().stream().sorted(Comparator.comparing(Seat::getId))
+				.map(Seat::getSeatNumber).collect(Collectors.joining(", "));
+		String until = SHOW_TIME_OF_DAY.format(entry.getOfferExpiresAt().atZone(properties.timeZone()))
+				.replace("AM", "am").replace("PM", "pm");
+		String link = url("show/" + show.getId());
+		String subject = "Seats for you: " + show.getTitle();
+		String text = """
+				Hi %s,
+
+				Good news: seats came free for %s (%s), and you're next on the waitlist.
+				Seats %s are held for you until %s. Book them before then, or they go to the next person in line.
+
+				Book your seats: %s
+				""".formatted(user.getName(), show.getTitle(), when(show.getStartTime()), seats, until, link);
+		String html = layout("Seats are waiting for you", """
+				<p>Hi %s,</p>
+				<p>Good news: seats came free for <b>%s</b> (%s), and you're next on the waitlist.</p>
+				<p>Seats <b>%s</b> are held for you until <b>%s</b>. Book them before then, or they go to the next person in line.</p>
+				%s""".formatted(esc(user.getName()), esc(show.getTitle()), when(show.getStartTime()), esc(seats), until,
+				button("Book my seats", link)));
+		return new EmailMessage(user.getEmail(), subject, text, html);
 	}
 
 	String layout(String heading, String body) {

@@ -2,6 +2,7 @@ package com.abhishekraj.BookMySeat.service;
 
 import com.abhishekraj.BookMySeat.dto.WaitlistRequest;
 import com.abhishekraj.BookMySeat.dto.WaitlistResponse;
+import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.SeatStatus;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.WaitlistEntry;
@@ -23,7 +24,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 
-/** Joining and leaving the waitlist of a sold-out show. Offers (seats freed by a cancellation) come in 21.2. */
+/** Joining and leaving the waitlist of a sold-out show. Offers of seats that come free: WaitlistOffers. */
 @Service
 @RequiredArgsConstructor
 public class WaitlistService {
@@ -34,6 +35,8 @@ public class WaitlistService {
 	private final ShowRepository showRepository;
 	private final SeatRepository seatRepository;
 	private final UserRepository userRepository;
+	private final SeatHoldService seatHoldService;
+	private final WaitlistMetrics metrics;
 	private final Clock clock;
 
 	@Transactional
@@ -46,11 +49,14 @@ public class WaitlistService {
 		if (!Instant.now(clock).isBefore(show.getStartTime())) {
 			throw new ConflictException("Show " + show.getId() + " has already started");
 		}
-		// Only BOOKED seats count as taken: a held seat comes back within minutes unless it's booked
 		if (!seatRepository.existsByShowId(show.getId())) {
 			throw new ConflictException("Show " + show.getId() + " has no seats yet");
 		}
-		if (seatRepository.existsByShowIdAndStatus(show.getId(), SeatStatus.AVAILABLE)) {
+		// Sold out = every seat is booked or held (by a customer paying, or for a waitlist offer).
+		// A held seat that comes free again goes to the line (the sweep offers it), so nobody waits for nothing.
+		List<Long> free = seatRepository.findByShowIdAndStatusOrderByIdAsc(show.getId(), SeatStatus.AVAILABLE)
+				.stream().map(Seat::getId).toList();
+		if (seatHoldService.findHeldSeatIds(show.getId(), free).size() < free.size()) {
 			throw new ConflictException("Seats are still available for this show: book them directly");
 		}
 		if (waitlistRepository.findByShowIdAndUserIdAndStatusIn(show.getId(), userId, ACTIVE).isPresent()) {
@@ -64,6 +70,7 @@ public class WaitlistService {
 			// Two joins at once: the partial unique index lets only one in
 			throw new ConflictException("You are already on the waitlist for this show");
 		}
+		metrics.joined();
 		return WaitlistResponse.from(entry, position(entry));
 	}
 

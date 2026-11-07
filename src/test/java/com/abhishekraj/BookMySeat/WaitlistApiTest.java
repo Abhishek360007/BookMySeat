@@ -1,12 +1,15 @@
 package com.abhishekraj.BookMySeat;
 
 import com.abhishekraj.BookMySeat.entity.Role;
+import com.abhishekraj.BookMySeat.entity.WaitlistStatus;
+import com.abhishekraj.BookMySeat.notification.OutboxEmailRepository;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import com.abhishekraj.BookMySeat.repository.WaitlistRepository;
+import com.abhishekraj.BookMySeat.service.BookingService;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +23,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -39,7 +44,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// Joining and leaving the waitlist of a sold-out show. Same configuration as BookingApiTest (shared Spring context).
+// The waitlist of a sold-out show: joining, leaving, and offers of seats freed by cancellations. Same configuration as BookingApiTest (shared Spring context).
 @SpringBootTest(properties = {
 		"app.admin.email=api-test-admin@example.com",
 		"app.admin.password=Api-Test-Admin-Pw-1",
@@ -58,6 +63,9 @@ class WaitlistApiTest {
 	@Autowired VenueRepository venueRepository;
 	@Autowired UserRepository userRepository;
 	@Autowired StringRedisTemplate redis;
+	@Autowired OutboxEmailRepository outboxRepository;
+	@Autowired BookingService bookingService;
+	@Autowired PlatformTransactionManager transactionManager;
 
 	String admin;
 	long showId;
@@ -71,12 +79,12 @@ class WaitlistApiTest {
 		showId = ((Number) JsonPath.read(adminCall(post("/api/shows"),
 						"{\"title\":\"Waitlist Show\",\"startTime\":\"" + start + "\",\"price\":200.00,\"venueId\":" + venueId + "}")
 				.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.id")).longValue();
-		adminCall(post("/api/shows/" + showId + "/seats"), "{\"rows\":1,\"seatsPerRow\":2}").andExpect(status().isCreated());
 	}
 
 	@AfterEach
 	void cleanUp() {
 		waitlistRepository.deleteAll();
+		outboxRepository.deleteAll();
 		bookingRepository.deleteAll();
 		seatRepository.deleteAll();
 		showRepository.deleteAll();
@@ -87,6 +95,7 @@ class WaitlistApiTest {
 
 	@Test
 	void onlyASoldOutShow_hasAWaitlist_andEachPersonGetsThePlaceTheyJoinedAt() throws Exception {
+		seats(2);
 		String buyer = registerAndLogin("waitlist-buyer@example.com");
 		String first = registerAndLogin("waitlist-first@example.com");
 		String second = registerAndLogin("waitlist-second@example.com");
@@ -115,6 +124,7 @@ class WaitlistApiTest {
 
 	@Test
 	void invalidRequests_areRefused() throws Exception {
+		seats(2);
 		String user = registerAndLogin("waitlist-invalid@example.com");
 		bookAll(user);
 
@@ -131,6 +141,7 @@ class WaitlistApiTest {
 
 	@Test
 	void twoJoinsAtOnce_bySamePerson_giveOnePlaceInLine() throws Exception {
+		seats(2);
 		String buyer = registerAndLogin("waitlist-buyer2@example.com");
 		String user = registerAndLogin("waitlist-twice@example.com");
 		bookAll(buyer);
@@ -162,7 +173,131 @@ class WaitlistApiTest {
 		mine(user).andExpect(jsonPath("$", hasSize(1)));
 	}
 
+	@Test
+	void aCancellation_holdsTheFreedSeats_forTheFirstPersonInLineWhoseRequestFits_untilTheyBook() throws Exception {
+		List<Integer> seats = seats(4);
+		String buyer = registerAndLogin("waitlist-buyer3@example.com");
+		int firstPair = book(buyer, seats.get(0), seats.get(1));
+		book(buyer, seats.get(2), seats.get(3));
+		String wantsThree = registerAndLogin("waitlist-three@example.com");
+		String wantsTwo = registerAndLogin("waitlist-two@example.com");
+		String wantsOne = registerAndLogin("waitlist-one@example.com");
+		join(wantsThree, 3).andExpect(status().isCreated());
+		join(wantsTwo, 2).andExpect(status().isCreated());
+		join(wantsOne, 1).andExpect(status().isCreated());
+
+		Instant cancelled = Instant.now();
+		cancel(buyer, firstPair);
+
+		// Two seats came free: too few for the first person, exactly right for the second, none left for the third
+		String offer = mine(wantsTwo).andExpect(jsonPath("$[0].status").value("OFFERED"))
+				.andExpect(jsonPath("$[0].position").doesNotExist())
+				.andExpect(jsonPath("$[0].offeredSeatIds", hasSize(2)))
+				.andExpect(jsonPath("$[0].offeredSeatNumbers[0]").value("A1"))
+				.andReturn().getResponse().getContentAsString();
+		Instant expires = Instant.parse(JsonPath.read(offer, "$[0].offerExpiresAt"));
+		assertThat(expires).isBetween(cancelled.plusSeconds(14 * 60), Instant.now().plusSeconds(15 * 60));
+		mine(wantsThree).andExpect(jsonPath("$[0].status").value("WAITING")).andExpect(jsonPath("$[0].position").value(1));
+		mine(wantsOne).andExpect(jsonPath("$[0].status").value("WAITING")).andExpect(jsonPath("$[0].position").value(2));
+
+		// The seats are held for them (for the whole window), so nobody else can take them
+		assertThat(redis.getExpire("hold:show:" + showId + ":seat:" + seats.get(0))).isGreaterThan(14 * 60);
+		hold(wantsOne, seats.get(0)).andExpect(status().isConflict());
+		// Holding them again themselves (as the web app does) doesn't shorten the offer to the usual 5 minutes
+		hold(wantsTwo, seats.get(0), seats.get(1)).andExpect(status().isCreated());
+		assertThat(redis.getExpire("hold:show:" + showId + ":seat:" + seats.get(0))).isGreaterThan(14 * 60);
+
+		assertThat(outboxRepository.findAll()).filteredOn(e -> e.getKind().equals("WAITLIST_OFFER")).singleElement()
+				.satisfies(e -> {
+					assertThat(e.getRecipient()).isEqualTo("waitlist-two@example.com");
+					assertThat(e.getSubject()).isEqualTo("Seats for you: Waitlist Show");
+					assertThat(e.getBodyText()).contains("Seats A1, A2 are held for you until").contains("/#/show/" + showId);
+				});
+
+		mvc.perform(post("/api/bookings").header("Authorization", "Bearer " + wantsTwo).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"showId\":" + showId + ",\"seatIds\":" + List.of(seats.get(0), seats.get(1)) + "}"))
+				.andExpect(status().isCreated());
+		mine(wantsTwo).andExpect(jsonPath("$").isEmpty()); // claimed: off the waitlist
+		assertThat(waitlistRepository.findAll()).filteredOn(e -> e.getStatus() == WaitlistStatus.CLAIMED).hasSize(1);
+	}
+
+	@Test
+	void aCancellationThatRollsBack_leavesNoOfferAndNoHold() throws Exception {
+		List<Integer> seats = seats(1);
+		String buyer = registerAndLogin("waitlist-buyer4@example.com");
+		int bookingId = book(buyer, seats.get(0));
+		String waiting = registerAndLogin("waitlist-rollback@example.com");
+		join(waiting, 1).andExpect(status().isCreated());
+		long buyerId = userRepository.findByEmail("waitlist-buyer4@example.com").orElseThrow().getId();
+
+		new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+			bookingService.cancel(buyerId, (long) bookingId);
+			assertThat(redis.hasKey("hold:show:" + showId + ":seat:" + seats.get(0))).isTrue(); // offered inside
+			tx.setRollbackOnly();
+		});
+
+		assertThat(redis.hasKey("hold:show:" + showId + ":seat:" + seats.get(0))).isFalse();
+		mine(waiting).andExpect(jsonPath("$[0].status").value("WAITING"));
+		assertThat(outboxRepository.findAll()).noneMatch(e -> e.getKind().equals("WAITLIST_OFFER"));
+	}
+
+	@Test
+	void twoCancellationsAtOnce_offerToTwoDifferentPeople() throws Exception {
+		List<Integer> seats = seats(2);
+		String buyer = registerAndLogin("waitlist-buyer5@example.com");
+		int first = book(buyer, seats.get(0));
+		int second = book(buyer, seats.get(1));
+		String a = registerAndLogin("waitlist-a@example.com");
+		String b = registerAndLogin("waitlist-b@example.com");
+		join(a, 1).andExpect(status().isCreated());
+		join(b, 1).andExpect(status().isCreated());
+
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		CountDownLatch go = new CountDownLatch(1);
+		List<Future<Integer>> results = new ArrayList<>();
+		for (int bookingId : List.of(first, second)) {
+			results.add(pool.submit(() -> {
+				go.await();
+				return mvc.perform(post("/api/bookings/" + bookingId + "/cancel").header("Authorization", "Bearer " + buyer))
+						.andReturn().getResponse().getStatus();
+			}));
+		}
+		go.countDown();
+		for (Future<Integer> result : results) {
+			assertThat(result.get()).isEqualTo(200);
+		}
+		pool.shutdown();
+
+		List<Integer> offeredToA = JsonPath.read(mine(a).andReturn().getResponse().getContentAsString(), "$[0].offeredSeatIds");
+		List<Integer> offeredToB = JsonPath.read(mine(b).andReturn().getResponse().getContentAsString(), "$[0].offeredSeatIds");
+		assertThat(offeredToA).hasSize(1);
+		assertThat(offeredToB).hasSize(1);
+		assertThat(List.of(offeredToA.getFirst(), offeredToB.getFirst())).containsExactlyInAnyOrderElementsOf(seats);
+	}
+
 	// ---- helpers ----
+
+	List<Integer> seats(int count) throws Exception {
+		adminCall(post("/api/shows/" + showId + "/seats"), "{\"rows\":1,\"seatsPerRow\":" + count + "}").andExpect(status().isCreated());
+		return JsonPath.read(mvc.perform(get("/api/shows/" + showId + "/seats")).andReturn().getResponse().getContentAsString(), "$[*].id");
+	}
+
+	ResultActions hold(String token, Integer... seatIds) throws Exception {
+		return mvc.perform(post("/api/bookings/hold").header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"showId\":" + showId + ",\"seatIds\":" + List.of(seatIds) + "}"));
+	}
+
+	int book(String token, Integer... seatIds) throws Exception {
+		hold(token, seatIds).andExpect(status().isCreated());
+		return JsonPath.read(mvc.perform(post("/api/bookings").header("Authorization", "Bearer " + token)
+						.contentType(MediaType.APPLICATION_JSON).content("{\"showId\":" + showId + ",\"seatIds\":" + List.of(seatIds) + "}"))
+				.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.id");
+	}
+
+	void cancel(String token, int bookingId) throws Exception {
+		mvc.perform(post("/api/bookings/" + bookingId + "/cancel").header("Authorization", "Bearer " + token))
+				.andExpect(status().isOk());
+	}
 
 	ResultActions join(String token, int seats) throws Exception {
 		return mvc.perform(post("/api/waitlist").header("Authorization", "Bearer " + token)

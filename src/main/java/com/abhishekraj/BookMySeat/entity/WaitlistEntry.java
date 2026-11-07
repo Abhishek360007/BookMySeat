@@ -61,6 +61,14 @@ public class WaitlistEntry {
 		this.createdAt = now;
 	}
 
+	/** These seats are held for this person until expiresAt. */
+	public void offer(Set<Seat> seats, Instant now, Instant expiresAt) {
+		this.status = WaitlistStatus.OFFERED;
+		this.offeredSeats = seats;
+		this.offeredAt = now;
+		this.offerExpiresAt = expiresAt;
+	}
+
 	public void end(WaitlistStatus how, Instant now) {
 		this.status = how;
 		this.endedAt = now;

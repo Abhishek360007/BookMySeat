@@ -13,15 +13,18 @@ import java.util.*;
 @Service
 public class SeatHoldService {
 
-	// All-or-nothing in one atomic step: fail if ANY seat is held by someone else,
-	// otherwise (re)set every key, which also refreshes the TTL of seats this user already holds
+	// All-or-nothing in one atomic step: fail if ANY seat is held by someone else, otherwise (re)set every key.
+	// A hold this user already has is refreshed but never shortened (e.g. a 15-minute waitlist offer stays 15 minutes
+	// when they hold the same seats again); TTL is -2 for a missing key, so new holds are always set.
 	private static final RedisScript<Long> HOLD_SCRIPT = new DefaultRedisScript<>("""
 			for i, key in ipairs(KEYS) do
 				local owner = redis.call('GET', key)
 				if owner and owner ~= ARGV[1] then return 0 end
 			end
 			for i, key in ipairs(KEYS) do
-				redis.call('SET', key, ARGV[1], 'EX', ARGV[2])
+				if redis.call('TTL', key) < tonumber(ARGV[2]) then
+					redis.call('SET', key, ARGV[1], 'EX', ARGV[2])
+				end
 			end
 			return 1
 			""", Long.class);
@@ -61,9 +64,14 @@ public class SeatHoldService {
 
 	/** All-or-nothing: either every seat is held for this user, or none are. */
 	public boolean holdAll(Long showId, List<Long> seatIds, Long userId) {
+		return holdAll(showId, seatIds, userId, holdDuration);
+	}
+
+	/** Same, for a given time (a waitlist offer holds its seats for the claim window). */
+	public boolean holdAll(Long showId, List<Long> seatIds, Long userId, Duration ttl) {
 		List<String> keys = seatIds.stream().map(id -> key(showId, id)).toList();
 		Long ok = redis.execute(HOLD_SCRIPT, keys,
-				String.valueOf(userId), String.valueOf(holdDuration.toSeconds()));
+				String.valueOf(userId), String.valueOf(Math.max(1, ttl.toSeconds())));
 		return ok != null && ok == 1;
 	}
 

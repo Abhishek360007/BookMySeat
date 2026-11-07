@@ -12,7 +12,7 @@ import java.util.List;
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 	List<Seat> findByShowIdOrderByIdAsc(Long showId);
 	boolean existsByShowId(Long showId);
-	boolean existsByShowIdAndStatus(Long showId, SeatStatus status);
+	List<Seat> findByShowIdAndStatusOrderByIdAsc(Long showId, SeatStatus status);
 
 	@Query("""
 			select new com.abhishekraj.BookMySeat.repository.ShowStats$Seats(s.show.id, count(s),
