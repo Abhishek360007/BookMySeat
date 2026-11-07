@@ -108,7 +108,7 @@ try {
 	await open(page, '#/', () => page.locator('.show-card').first().waitFor());
 	await audit(page, 'shows');
 	await open(page, `#/show/${show.id}`, () => page.locator('.seat').first().waitFor());
-	await page.locator('.seat:not([disabled])').nth(3).click(); // a seat selected, to see that state too
+	await page.locator('.seat:not([aria-disabled])').nth(3).click(); // a seat selected, to see that state too
 	await audit(page, 'seat map');
 	await open(page, `#/show/${soldOut.id}`, () => page.getByRole('button', { name: 'Join waitlist' }).waitFor());
 	await audit(page, 'sold-out show');
@@ -132,7 +132,7 @@ try {
 	await audit(page, 'shows, logged in (email not confirmed)');
 	await page.goto(`${BASE}/#/show/${show.id}`);
 	await page.locator('.seat').first().waitFor();
-	await page.locator('.seat:not([disabled])').first().click();
+	await page.locator('.seat:not([aria-disabled])').first().click();
 	await page.getByRole('button', { name: 'Hold seats' }).click();
 	await audit(page, 'held seats', () => page.locator('#timer').waitFor());
 	await page.getByRole('button', { name: /Confirm booking/ }).click();

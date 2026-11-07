@@ -291,7 +291,8 @@ async function renderShow(showId) {
 		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · <span id="seat-prices"></span></p>
 		<div class="card">
 			<div class="screen">SCREEN</div>
-			<div class="seatmap" id="seatmap"></div>
+			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
+			<div class="seatmap" id="seatmap" role="group" aria-label="Seats" aria-describedby="seatmap-help"></div>
 			<div class="legend">
 				<span><i class="l-free"></i>Available</span><span><i class="l-sel"></i>Your selection</span>
 				<span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span>
@@ -330,19 +331,43 @@ async function renderShow(showId) {
 			: '';
 	};
 
+	// Redraws replace the seat map and summary, so whatever had keyboard focus there gets it back afterwards
+	let focusKey = null;
+	let tabStop = null; // the seat that Tab lands on: the one last focused
+	const rememberFocus = () => {
+		const el = document.activeElement;
+		if (el?.closest('#seatmap')) focusKey = { seat: el.dataset.id };
+		else if (el?.closest('#summary')) focusKey = { summary: el.id };
+		else if (el && el !== document.body && !el.closest('dialog')) focusKey = null; // focus went elsewhere on purpose
+	};
+	const restoreFocus = () => {
+		if (!focusKey || document.querySelector('dialog[open]')) return;
+		const summary = document.getElementById('summary');
+		const el = focusKey.seat ? document.querySelector(`#seatmap [data-id="${focusKey.seat}"]`)
+			: document.getElementById(focusKey.summary)
+				?? summary.querySelector('.btn-primary:not([disabled])') ?? summary.querySelector('button:not([disabled]), select');
+		if (el && !el.disabled) { // a button disabled while busy: try again after the next redraw
+			el.focus();
+			focusKey = null;
+		}
+	};
+
 	const draw = () => {
 		const mine = new Set(hold?.seatIds ?? []);
 		const seatmap = document.getElementById('seatmap');
 		if (!seatmap) return; // a refresh that finished after leaving the page
+		rememberFocus();
+		if (!seats.some((s) => s.id === tabStop)) tabStop = (seats.find((s) => s.status === 'AVAILABLE') ?? seats[0])?.id;
 		seatmap.innerHTML = rows().map(([row, list]) => `
-			<div class="seat-row">
-				<span class="row-label">${esc(row)}</span>
+			<div class="seat-row" role="group" aria-label="Row ${esc(row)}">
+				<span class="row-label" aria-hidden="true">${esc(row)}</span>
 				${list.map((seat) => {
 					const isMine = mine.has(seat.id);
 					const cls = isMine ? 'mine' : selected.has(seat.id) ? 'selected' : seat.status.toLowerCase();
 					const disabled = hold || (seat.status !== 'AVAILABLE' && !isMine);
-					return `<button class="seat ${cls} cat-${(seat.category ?? 'REGULAR').toLowerCase()}" data-id="${seat.id}" ${disabled ? 'disabled' : ''}
-						aria-pressed="${selected.has(seat.id)}" aria-label="${esc(seatLabel(seat, isMine ? 'held by you' : seat.status.toLowerCase()))}">${seat.num}</button>${aisles.has(seat.num) ? '<span class="aisle"></span>' : ''}`;
+					return `<button class="seat ${cls} cat-${(seat.category ?? 'REGULAR').toLowerCase()}" data-id="${seat.id}" ${disabled ? 'aria-disabled="true"' : ''}
+						tabindex="${seat.id === tabStop ? 0 : -1}" aria-pressed="${selected.has(seat.id)}"
+						aria-label="${esc(seatLabel(seat, isMine ? 'held by you' : seat.status.toLowerCase()))}">${seat.num}</button>${aisles.has(seat.num) ? '<span class="aisle"></span>' : ''}`;
 				}).join('')}
 			</div>`).join('');
 
@@ -381,6 +406,7 @@ async function renderShow(showId) {
 				<button class="btn btn-primary" id="hold" ${count === 0 || busy ? 'disabled' : ''}>Hold seats</button>`;
 			document.getElementById('hold').onclick = holdSeats;
 		}
+		restoreFocus();
 	};
 
 	const reload = async () => {
@@ -515,17 +541,41 @@ async function renderShow(showId) {
 			app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">↩</div><h1>Seats no longer available</h1>
 				<p>Your payment arrived after the seats were taken, so it is being refunded in full.</p>
 				<a class="btn btn-primary" href="#/">Back to shows</a></div>`;
+			focusStart(app.querySelector('h1'));
 		}
 	}
 
-	app.querySelector('#seatmap').addEventListener('click', (event) => {
+	const seatmapEl = app.querySelector('#seatmap');
+	seatmapEl.addEventListener('click', (event) => {
 		const button = event.target.closest('.seat');
-		if (!button || button.disabled) return;
+		if (!button || button.getAttribute('aria-disabled') === 'true') return;
 		const id = Number(button.dataset.id);
 		if (selected.has(id)) selected.delete(id);
 		else if (selected.size < 10) selected.add(id);
 		else toast('You can pick up to 10 seats.', 'error');
 		draw();
+	});
+
+	// Arrow keys move between seats (up and down: the nearest seat number in the next row), Home and End along a row
+	seatmapEl.addEventListener('focusin', (event) => { tabStop = Number(event.target.dataset.id) || tabStop; });
+	seatmapEl.addEventListener('keydown', (event) => {
+		const button = event.target.closest('.seat');
+		if (!button) return;
+		const grid = [...seatmapEl.querySelectorAll('.seat-row')].map((row) => [...row.querySelectorAll('.seat')]);
+		const r = grid.findIndex((row) => row.includes(button));
+		const c = grid[r].indexOf(button);
+		const nearest = (row) => row?.reduce((best, b) => (Math.abs(b.textContent - button.textContent)
+			< Math.abs(best.textContent - button.textContent) ? b : best));
+		const target = {
+			ArrowLeft: grid[r][c - 1], ArrowRight: grid[r][c + 1], ArrowUp: nearest(grid[r - 1]), ArrowDown: nearest(grid[r + 1]),
+			Home: grid[r][0], End: grid[r][grid[r].length - 1],
+		}[event.key];
+		if (!(event.key in { ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1, Home: 1, End: 1 })) return;
+		event.preventDefault();
+		if (!target) return;
+		button.tabIndex = -1;
+		target.tabIndex = 0;
+		target.focus();
 	});
 
 	draw();
@@ -551,6 +601,7 @@ function showSuccess(seatNumbers, amount, bookingId) {
 				<a class="btn btn-ghost" href="#/">More shows</a>
 			</div>
 		</div>`;
+	focusStart(app.querySelector('h1'));
 }
 
 async function renderBookings() {
@@ -801,6 +852,7 @@ async function renderAccount() {
 // Pages render one after another. Otherwise a slow page that started earlier (e.g. My bookings still loading)
 // could finish after a quick second click and draw over the page that was asked for last.
 let routing = Promise.resolve();
+let firstRoute = true;
 function route() {
 	routing = routing.then(renderRoute, renderRoute);
 	return routing;
@@ -837,6 +889,17 @@ async function renderRoute() {
 		app.innerHTML = `<div class="card empty"><h1>Something went wrong</h1><p class="muted">${esc(e.message)}</p><a href="#/">Back to shows</a></div>`;
 	}
 	window.scrollTo(0, 0);
+	const heading = app.querySelector('h1');
+	document.title = heading ? `${heading.textContent.trim()} · BookMySeat` : 'BookMySeat';
+	if (!firstRoute && !document.querySelector('dialog[open]')) focusStart(heading);
+	firstRoute = false;
+}
+
+/** Puts keyboard focus at the start of the page (its heading, else the main area) without showing a focus ring. */
+function focusStart(heading) {
+	const target = heading ?? app;
+	if (target !== app) target.tabIndex = -1;
+	target.focus({ preventScroll: true });
 }
 
 const scripts = new Map();
@@ -857,6 +920,11 @@ async function start() {
 	document.getElementById('login-btn').onclick = () => requireLogin().then((ok) => ok && route());
 	document.getElementById('logout-btn').onclick = logout;
 	document.getElementById('verify-resend').onclick = resendVerification;
+	// The skip link must not change the hash (that's the router's): it moves focus itself
+	document.getElementById('skip-link').onclick = (event) => {
+		event.preventDefault();
+		focusStart(app.querySelector('h1'));
+	};
 	try {
 		state.config = await api('/api/config');
 	} catch {
