@@ -146,6 +146,8 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible { outline: 2px soli
 .status { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .15rem .5rem; border-radius: 999px; border: 1px solid; }
 .status.CONFIRMED { color: var(--ok); }
 .status.CANCELLED { color: var(--muted); }
+.status.WAITING { color: var(--accent); }
+.status.OFFERED { color: var(--ok); }
 
 /* Dialog, toasts, misc */
 dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 24px; width: min(92vw, 380px); }
@@ -234,3 +236,6 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	.seat { width: 1.6rem; height: 1.6rem; font-size: .6rem; border-radius: 6px 6px 3px 3px; }
 	.who { display: none; }
 }
+
+/* Waitlist: the seat count next to the Join button */
+.summary select.waitlist-seats { width: auto; }

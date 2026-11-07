@@ -268,8 +268,22 @@ async function renderShow(showId) {
 	}
 	let seats = await api(`/api/shows/${showId}/seats`);
 	const selected = new Set();
-	let hold = null; // { seatIds, seatNumbers, expiresAt, idempotencyKey }
+	let hold = null; // { seatIds, seatNumbers, expiresAt, idempotencyKey, offer }
 	let busy = false;
+	let wait = null; // your place on this show's waitlist: { status, position, seats, offeredSeatIds, ... }
+
+	// A waitlist offer means the seats are already held for you: the page goes on as if you had just held them
+	const loadWait = async () => {
+		if (!state.user) { wait = null; return; }
+		const mine = await api('/api/waitlist/me', { auth: true }).catch(() => []);
+		wait = mine.find((e) => e.showId === Number(showId)) ?? null;
+		if (wait?.status === 'OFFERED' && !hold) {
+			hold = { seatIds: wait.offeredSeatIds, seatNumbers: wait.offeredSeatNumbers, expiresAt: wait.offerExpiresAt,
+				idempotencyKey: uuid(), offer: true };
+		}
+	};
+	const soldOut = () => !seats.some((s) => s.status === 'AVAILABLE');
+	await loadWait();
 
 	app.innerHTML = `
 		<a href="#/" class="small">← All shows</a>
@@ -337,14 +351,29 @@ async function renderShow(showId) {
 		if (hold) {
 			const action = state.config.paymentsEnabled ? `Pay ${total(hold.seatIds)}` : `Confirm booking · ${total(hold.seatIds)}`;
 			summary.innerHTML = `
-				<div><strong>${hold.seatNumbers.join(', ')}</strong> held for you · <span class="timer" id="timer"></span></div>
+				<div>${hold.offer ? 'From the waitlist: ' : ''}<strong>${esc(hold.seatNumbers.join(', '))}</strong> held for you · <span class="timer" id="timer"></span></div>
 				<div class="row">
-					<button class="btn btn-ghost" id="release" ${busy ? 'disabled' : ''}>Release</button>
+					<button class="btn btn-ghost" id="release" ${busy ? 'disabled' : ''}>${hold.offer ? 'Decline' : 'Release'}</button>
 					<button class="btn btn-primary" id="confirm" ${busy ? 'disabled' : ''}>${esc(action)}</button>
 				</div>`;
 			document.getElementById('release').onclick = release;
 			document.getElementById('confirm').onclick = state.config.paymentsEnabled ? pay : confirm;
 			tick();
+		} else if (soldOut() && wait?.status === 'WAITING') {
+			summary.innerHTML = `
+				<div id="waitlist-status"><strong>You're #${esc(wait.position)} on the waitlist</strong> for ${esc(wait.seats)} seat${wait.seats > 1 ? 's' : ''}.
+					<span class="muted">When seats come free they're held for you, and we email you.</span></div>
+				<button class="btn btn-ghost" id="leave-waitlist" ${busy ? 'disabled' : ''}>Leave waitlist</button>`;
+			document.getElementById('leave-waitlist').onclick = leaveWaitlist;
+		} else if (soldOut()) {
+			summary.innerHTML = `
+				<div><strong>Sold out.</strong> <span class="muted">Join the waitlist: when seats come free, they're held for you.</span></div>
+				<div class="row">
+					<label for="waitlist-seats" class="small">Seats</label>
+					<select id="waitlist-seats" class="waitlist-seats">${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}</select>
+					<button class="btn btn-primary" id="join-waitlist" ${busy ? 'disabled' : ''}>Join waitlist</button>
+				</div>`;
+			document.getElementById('join-waitlist').onclick = joinWaitlist;
 		} else {
 			const count = selected.size;
 			summary.innerHTML = `
@@ -360,6 +389,8 @@ async function renderShow(showId) {
 		for (const id of selected) {
 			if (seats.find((s) => s.id === id)?.status !== 'AVAILABLE') selected.delete(id);
 		}
+		// While you wait, an offer shows up here within one poll
+		if (!hold && state.user && (wait || soldOut())) await loadWait();
 		draw();
 	};
 
@@ -370,8 +401,10 @@ async function renderShow(showId) {
 		el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
 		el.classList.toggle('low', left < 60);
 		if (left === 0) {
+			toast(hold.offer ? 'Your waitlist offer expired; the seats went to the next person in line.'
+				: 'Your hold expired; the seats were released.', 'error');
+			if (hold.offer) wait = null;
 			hold = null;
-			toast('Your hold expired; the seats were released.', 'error');
 			reload();
 		}
 	};
@@ -395,9 +428,33 @@ async function renderShow(showId) {
 
 	async function release() {
 		await run(async () => {
-			await api('/api/bookings/hold/release', { method: 'POST', auth: true, body: { showId: Number(showId), seatIds: hold.seatIds } });
+			if (hold.offer) {
+				// Declining leaves the waitlist; the seats go to the next person in line right away
+				await api(`/api/waitlist/${showId}`, { method: 'DELETE', auth: true });
+				wait = null;
+				toast('Offer declined: the seats went to the next person in line.');
+			} else {
+				await api('/api/bookings/hold/release', { method: 'POST', auth: true, body: { showId: Number(showId), seatIds: hold.seatIds } });
+			}
 			hold = null;
 			await reload();
+		});
+	}
+
+	async function joinWaitlist() {
+		const seatCount = Number(document.getElementById('waitlist-seats').value);
+		if (!(await requireLogin())) return;
+		await run(async () => {
+			wait = await api('/api/waitlist', { method: 'POST', auth: true, body: { showId: Number(showId), seats: seatCount } });
+			toast(`You're #${wait.position} on the waitlist.`);
+		});
+	}
+
+	async function leaveWaitlist() {
+		await run(async () => {
+			await api(`/api/waitlist/${showId}`, { method: 'DELETE', auth: true });
+			wait = null;
+			toast('You left the waitlist.');
 		});
 	}
 
@@ -501,13 +558,37 @@ async function renderBookings() {
 		location.hash = '#/';
 		return;
 	}
-	const bookings = await api('/api/bookings/me', { auth: true });
+	const [bookings, waitlist] = await Promise.all([
+		api('/api/bookings/me', { auth: true }),
+		api('/api/waitlist/me', { auth: true }).catch(() => []),
+	]);
+	const waitlistHtml = waitlist.length === 0 ? '' : `
+		<h2>Waitlist</h2>
+		<div class="bookings" id="waitlist">
+			${waitlist.map((w) => `
+				<div class="card row spread">
+					<div>
+						<div class="row"><strong>${esc(w.showTitle)}</strong><span class="status ${esc(w.status)}">${w.status === 'OFFERED'
+							? 'SEATS HELD FOR YOU' : `#${esc(w.position)} IN LINE`}</span></div>
+						<div class="muted small">${esc(w.venueName)} · ${esc(when.format(new Date(w.showStartTime)))}</div>
+						<div>${w.status === 'OFFERED'
+							? `Seats ${esc(w.offeredSeatNumbers.join(', '))} until ${esc(when.format(new Date(w.offerExpiresAt)))}`
+							: `${esc(w.seats)} seat${w.seats > 1 ? 's' : ''} wanted`}</div>
+					</div>
+					<div class="row">${w.status === 'OFFERED'
+						? `<a class="btn btn-primary" href="#/show/${esc(w.showId)}">Book now</a>`
+						: `<button class="btn btn-ghost" data-leave="${esc(w.showId)}">Leave</button>`}</div>
+				</div>`).join('')}
+		</div>`;
 	if (bookings.length === 0) {
-		app.innerHTML = `<h1>My bookings</h1><div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a show</a></div>`;
+		app.innerHTML = `<h1>My bookings</h1>${waitlistHtml}<div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a show</a></div>`;
+		bindLeave();
 		return;
 	}
 	app.innerHTML = `
 		<h1>My bookings</h1>
+		${waitlistHtml}
+		${waitlist.length ? '<h2>Bookings</h2>' : ''}
 		<div class="bookings">
 			${bookings.map((b) => `
 				<div class="card row spread">
@@ -521,12 +602,27 @@ async function renderBookings() {
 						<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button></div>` : ''}
 				</div>`).join('')}
 		</div>`;
+	bindLeave();
 	app.querySelectorAll('[data-cancel]').forEach((button) => {
 		button.onclick = async () => {
 			if (!confirm('Cancel this booking? The seats will be released.')) return;
 			try {
 				await api(`/api/bookings/${button.dataset.cancel}/cancel`, { method: 'POST', auth: true });
 				toast(state.config.paymentsEnabled ? 'Booking cancelled. Your refund is on its way.' : 'Booking cancelled.');
+				renderBookings();
+			} catch (e) {
+				toast(e.message, 'error');
+			}
+		};
+	});
+}
+
+function bindLeave() {
+	app.querySelectorAll('[data-leave]').forEach((button) => {
+		button.onclick = async () => {
+			try {
+				await api(`/api/waitlist/${button.dataset.leave}`, { method: 'DELETE', auth: true });
+				toast('You left the waitlist.');
 				renderBookings();
 			} catch (e) {
 				toast(e.message, 'error');
