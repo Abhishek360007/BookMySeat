@@ -1,6 +1,7 @@
 package com.abhishekraj.BookMySeat.repository;
 
 import com.abhishekraj.BookMySeat.entity.Seat;
+import com.abhishekraj.BookMySeat.entity.SeatStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
@@ -11,6 +12,7 @@ import java.util.List;
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 	List<Seat> findByShowIdOrderByIdAsc(Long showId);
 	boolean existsByShowId(Long showId);
+	boolean existsByShowIdAndStatus(Long showId, SeatStatus status);
 
 	@Query("""
 			select new com.abhishekraj.BookMySeat.repository.ShowStats$Seats(s.show.id, count(s),
