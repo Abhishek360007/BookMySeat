@@ -123,8 +123,11 @@ try {
 
 	// The booking is cancelled: both seats appear on the first customer's page, held for them
 	await rest(`/api/bookings/${booking.id}/cancel`, { method: 'POST', token: buyer });
-	await page.getByText('From the waitlist:').waitFor({ timeout: 25_000 });
+	await page.locator('#summary').getByText('From the waitlist:').waitFor({ timeout: 25_000 });
 	const offerText = await page.locator('#summary').innerText();
+	await page.waitForFunction(() => document.getElementById('announce').textContent.startsWith('From the waitlist'));
+	check((await page.locator('#announce').textContent()).includes('seats A1, A2 are held for you'),
+		'screen readers hear that the offer arrived');
 	check(offerText.includes('A1, A2') && /1[45]:\d\d left/.test(offerText), `the offer shows up live with a ~15 minute countdown (${offerText.replace(/\s+/g, ' ')})`);
 	check(await page.getByRole('button', { name: 'Seat A1, held by you' }).isVisible(), 'the offered seats are marked as theirs');
 	await page.screenshot({ path: `${OUT}/wl-04-offer.png` });
@@ -162,7 +165,7 @@ try {
 	await next.locator('#waitlist .status', { hasText: 'SEATS HELD FOR YOU' }).waitFor();
 	check((await next.locator('#waitlist').innerText()).includes('Seats A1'), 'the next person gets the seat they asked for');
 	await next.getByRole('link', { name: 'Book now' }).click();
-	await next.getByText('From the waitlist:').waitFor();
+	await next.locator('#summary').getByText('From the waitlist:').waitFor();
 	await next.getByRole('button', { name: 'Decline' }).click();
 	await next.getByText('Offer declined').waitFor();
 	await next.getByRole('button', { name: 'Seat A1, available' }).waitFor();

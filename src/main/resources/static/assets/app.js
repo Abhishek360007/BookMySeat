@@ -308,7 +308,7 @@ async function renderShow(showId) {
 		<div class="card">
 			<div class="screen">SCREEN</div>
 			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
-			<div class="seatmap" id="seatmap" role="group" aria-label="Seats" aria-describedby="seatmap-help"></div>
+			<div class="seatmap" id="seatmap" role="group" aria-label="Seat map" aria-describedby="seatmap-help"></div>
 			<div class="legend">
 				<span><i class="l-free"></i>Available</span><span><i class="l-sel"></i>Your selection</span>
 				<span><i class="l-held"></i>Held</span><span><i class="l-booked"></i>Booked</span>
