@@ -72,7 +72,7 @@ export async function renderAdmin(params) {
 		return;
 	}
 	box.innerHTML = `
-		<div class="card table-wrap">
+		<div class="card table-wrap" tabindex="0" role="region" aria-label="Shows">
 			<table class="table">
 				<thead><tr><th>Show</th><th>When</th><th>Price</th><th>Sold</th><th class="num">Revenue</th></tr></thead>
 				<tbody>
@@ -401,7 +401,7 @@ export async function renderAdminShow(showId) {
 			return;
 		}
 		box.innerHTML = `
-			<div class="table-wrap"><table class="table">
+			<div class="table-wrap" tabindex="0" role="region" aria-label="Bookings"><table class="table">
 				<thead><tr><th>#</th><th>Customer</th><th>Seats</th><th>Booked</th><th>Checked in</th><th class="num">Amount</th></tr></thead>
 				<tbody>${page.content.map((b) => `<tr><td>${b.id}</td><td>${esc(b.userEmail)}</td><td>${esc(b.seats.join(', '))}</td>
 					<td class="small">${esc(when.format(new Date(b.createdAt)))}</td>

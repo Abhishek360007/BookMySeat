@@ -512,7 +512,7 @@ async function renderShow(showId) {
 			showSuccess(hold.seatNumbers, payment.amount, payment.bookingId);
 		} else if (payment.status.startsWith('REFUND')) {
 			stopTimers();
-			app.innerHTML = `<div class="card success"><div class="big">↩</div><h2>Seats no longer available</h2>
+			app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">↩</div><h1>Seats no longer available</h1>
 				<p>Your payment arrived after the seats were taken, so it is being refunded in full.</p>
 				<a class="btn btn-primary" href="#/">Back to shows</a></div>`;
 		}
@@ -543,8 +543,8 @@ function testModeNote() {
 function showSuccess(seatNumbers, amount, bookingId) {
 	app.innerHTML = `
 		<div class="card success">
-			<div class="big">🎟️</div>
-			<h2>You're booked!</h2>
+			<div class="big" aria-hidden="true">🎟️</div>
+			<h1>You're booked!</h1>
 			<p>Seats <strong>${esc(seatNumbers.join(', '))}</strong> · ${esc(money.format(amount))} · booking #${esc(bookingId)}</p>
 			<div class="row center">
 				<a class="btn btn-primary" href="#/bookings">My bookings</a>
@@ -834,7 +834,7 @@ async function renderRoute() {
 		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
 		else await renderHome(new URLSearchParams(query));
 	} catch (e) {
-		app.innerHTML = `<div class="card empty"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><a href="#/">Back to shows</a></div>`;
+		app.innerHTML = `<div class="card empty"><h1>Something went wrong</h1><p class="muted">${esc(e.message)}</p><a href="#/">Back to shows</a></div>`;
 	}
 	window.scrollTo(0, 0);
 }

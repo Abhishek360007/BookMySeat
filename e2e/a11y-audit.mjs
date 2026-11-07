@@ -135,8 +135,10 @@ try {
 	await page.locator('.seat:not([disabled])').first().click();
 	await page.getByRole('button', { name: 'Hold seats' }).click();
 	await audit(page, 'held seats', () => page.locator('#timer').waitFor());
-	await page.getByRole('button', { name: 'Release' }).click();
-	await page.getByRole('button', { name: 'Hold seats' }).waitFor();
+	await page.getByRole('button', { name: /Confirm booking/ }).click();
+	await audit(page, 'booked', () => page.getByRole('heading', { name: "You're booked!" }).waitFor());
+	await page.goto(`${BASE}/#/show/999999`);
+	await audit(page, 'error page', () => page.getByRole('heading', { name: 'Something went wrong' }).waitFor());
 	await page.goto(`${BASE}/#/show/${soldOut.id}`);
 	await page.getByRole('button', { name: 'Join waitlist' }).click();
 	await audit(page, 'on the waitlist', () => page.locator('#waitlist-status').waitFor());
