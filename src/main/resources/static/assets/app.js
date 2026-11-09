@@ -283,6 +283,9 @@ async function renderShow(showId) {
 	// The promo code field: what is typed survives the redraws (every 10 s), and why a code was refused
 	let promoDraft = '';
 	let promoError = '';
+	// "Pick for me": how many seats and which category; kept across the redraws
+	let pickCount = 2;
+	let pickCategory = '';
 	let wait = null; // your place on this show's waitlist: { status, position, seats, offeredSeatIds, ... }
 
 	// A waitlist offer means the seats are already held for you: the page goes on as if you had just held them
@@ -430,10 +433,25 @@ async function renderShow(showId) {
 			document.getElementById('join-waitlist').onclick = joinWaitlist;
 		} else {
 			const count = selected.size;
+			const categories = usedCategories();
 			summary.innerHTML = `
 				<div>${count ? `<strong>${count} seat${count > 1 ? 's' : ''}</strong> · ${total(selected)}` : '<span class="muted">Pick up to 10 seats</span>'}</div>
-				<button class="btn btn-primary" id="hold" ${count === 0 || busy ? 'disabled' : ''}>Hold seats</button>`;
+				<button class="btn btn-primary" id="hold" ${count === 0 || busy ? 'disabled' : ''}>Hold seats</button>
+				<form class="pick" id="pick-form" novalidate>
+					<span class="small muted">Or let us choose:</span>
+					<span class="pick-field"><label for="pick-count" class="small">Seats</label>
+					<select id="pick-count">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<option value="${n}" ${n === pickCount ? 'selected' : ''}>${n}</option>`).join('')}</select></span>
+					${categories.length > 1 ? `<span class="pick-field"><label for="pick-category" class="small">Type</label>
+					<select id="pick-category"><option value="">Any</option>${categories.map((c) => `<option value="${c}" ${c === pickCategory ? 'selected' : ''}>${esc(CATEGORY_NAMES[c][0].toUpperCase() + CATEGORY_NAMES[c].slice(1))}</option>`).join('')}</select></span>` : ''}
+					<button class="btn btn-ghost btn-small" id="pick-best" ${busy ? 'disabled' : ''}>Pick best seats</button>
+				</form>`;
 			document.getElementById('hold').onclick = holdSeats;
+			const pickForm = document.getElementById('pick-form');
+			document.getElementById('pick-count').onchange = (e) => { pickCount = Number(e.target.value); };
+			const categorySelect = document.getElementById('pick-category');
+			if (categorySelect) categorySelect.onchange = (e) => { pickCategory = e.target.value; };
+			else pickCategory = '';
+			pickForm.onsubmit = pickBest;
 		}
 		restoreFocus();
 	};
@@ -527,6 +545,24 @@ async function renderShow(showId) {
 			selected.clear();
 			await reload();
 			announce(`Seats ${hold.seatNumbers.join(', ')} are held for you for ${minutesLeft()}.`);
+		});
+	}
+
+	// The best seats together, chosen and held by the server in one step (someone faster: it takes the next best)
+	async function pickBest(event) {
+		event.preventDefault();
+		if (!(await requireLogin())) return;
+		await run(async () => {
+			const response = await api('/api/bookings/hold/best', {
+				method: 'POST', auth: true, body: { showId: Number(showId), count: pickCount, category: pickCategory || null },
+			});
+			hold = { ...response, idempotencyKey: uuid() };
+			promoError = '';
+			selected.clear();
+			tabStop = response.seatIds[0];
+			focusNext = 'confirm';
+			await reload();
+			announce(`We picked seats ${hold.seatNumbers.join(', ')}. They are held for you for ${minutesLeft()}.`);
 		});
 	}
 

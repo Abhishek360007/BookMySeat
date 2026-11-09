@@ -279,3 +279,8 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .summary .promo .form-error { flex-basis: 100%; }
 .btn-small { padding: .35rem .7rem; font-size: .9rem; }
 .promo-off { color: var(--muted); }
+
+/* "Pick best seats" on its own line under the seat count */
+.summary .pick { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.summary .pick select { width: auto; }
+.summary .pick-field { display: inline-flex; gap: .4rem; align-items: center; } /* a label wraps with its list */
