@@ -1,5 +1,11 @@
 package com.abhishekraj.BookMySeat.controller;
 
+import com.abhishekraj.BookMySeat.dto.BestSeatsResponse;
+import com.abhishekraj.BookMySeat.entity.SeatCategory;
+import com.abhishekraj.BookMySeat.service.BestSeatService;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
 import com.abhishekraj.BookMySeat.dto.GenerateSeatsRequest;
 import com.abhishekraj.BookMySeat.dto.SeatResponse;
 import com.abhishekraj.BookMySeat.service.SeatService;
@@ -22,6 +28,7 @@ import java.util.List;
 public class SeatController {
 
 	private final SeatService seatService;
+	private final BestSeatService bestSeatService;
 
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
@@ -41,5 +48,17 @@ public class SeatController {
 	@GetMapping
 	public List<SeatResponse> getSeats(@PathVariable Long showId) {
 		return seatService.getSeats(showId);
+	}
+
+	@Operation(summary = "The best free seats together",
+			description = "count seats next to each other in one row (no aisle between them), nearest the middle of the "
+					+ "row and of the seats about two thirds back; optionally only one category. Nothing is held: to hold "
+					+ "them in the same step use POST /api/bookings/hold/best. 409 when no row has that many free together.")
+	@SecurityRequirements
+	@GetMapping("/best")
+	public BestSeatsResponse best(@PathVariable Long showId,
+			@RequestParam @Min(1) @Max(10) int count,
+			@RequestParam(required = false) SeatCategory category) {
+		return bestSeatService.suggest(showId, count, category);
 	}
 }

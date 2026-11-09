@@ -3,11 +3,13 @@ package com.abhishekraj.BookMySeat.controller;
 import com.abhishekraj.BookMySeat.dto.BookingResponse;
 import com.abhishekraj.BookMySeat.dto.CheckoutResponse;
 import com.abhishekraj.BookMySeat.dto.ConfirmBookingRequest;
+import com.abhishekraj.BookMySeat.dto.HoldBestRequest;
 import com.abhishekraj.BookMySeat.dto.HoldRequest;
 import com.abhishekraj.BookMySeat.dto.HoldResponse;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.payment.PaymentProperties;
 import com.abhishekraj.BookMySeat.payment.PaymentService;
+import com.abhishekraj.BookMySeat.service.BestSeatService;
 import com.abhishekraj.BookMySeat.service.BookingService;
 import com.abhishekraj.BookMySeat.service.IdempotencyService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,11 +35,21 @@ public class BookingController {
 	private final IdempotencyService idempotencyService;
 	private final PaymentService paymentService;
 	private final PaymentProperties paymentProperties;
+	private final BestSeatService bestSeatService;
 
 	@PostMapping("/hold")
 	@ResponseStatus(HttpStatus.CREATED)
 	public HoldResponse hold(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody HoldRequest request) {
 		return bookingService.holdSeats(userId(jwt), request);
+	}
+
+	@Operation(summary = "Hold the best free seats together",
+			description = "Picks like GET /api/shows/{showId}/seats/best and holds the seats for 5 minutes in the same call. "
+					+ "If someone holds that block first, the next best one is tried. 409 when no row has that many free together.")
+	@PostMapping("/hold/best")
+	@ResponseStatus(HttpStatus.CREATED)
+	public HoldResponse holdBest(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody HoldBestRequest request) {
+		return bestSeatService.holdBest(userId(jwt), request.showId(), request.count(), request.category());
 	}
 
 	@PostMapping("/hold/release")
