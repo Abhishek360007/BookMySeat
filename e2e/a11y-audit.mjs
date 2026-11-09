@@ -147,6 +147,9 @@ try {
 	await page.locator('.seat:not([aria-disabled])').first().click();
 	await page.getByRole('button', { name: 'Hold seats' }).click();
 	await audit(page, 'held seats', () => page.locator('#timer').waitFor());
+	await page.getByLabel('Promo code').fill('NOSUCHCODE');
+	await page.getByRole('button', { name: 'Apply' }).click();
+	await audit(page, 'held seats, promo code refused', () => page.locator('#promo-error').waitFor());
 	await page.getByRole('button', { name: /Confirm booking/ }).click();
 	await audit(page, 'booked', () => page.getByRole('heading', { name: "You're booked!" }).waitFor());
 	await page.goto(`${BASE}/#/show/999999`);
@@ -182,6 +185,8 @@ try {
 	await audit(adminPage, 'admin new show', () => adminPage.locator('form').first().waitFor());
 	await adminPage.goto(`${BASE}/#/admin/check-in`);
 	await audit(adminPage, 'admin check-in', () => adminPage.locator('form').first().waitFor());
+	await adminPage.goto(`${BASE}/#/admin/promo-codes`);
+	await audit(adminPage, 'admin promo codes', () => adminPage.locator('#new-code').waitFor());
 	await adminContext.close();
 } catch (error) {
 	failed = `step failed: ${error.message.split('\n')[0]}`;
