@@ -5,6 +5,7 @@ import com.abhishekraj.BookMySeat.dto.ConfirmBookingRequest;
 import com.abhishekraj.BookMySeat.dto.PaymentResponse;
 import com.abhishekraj.BookMySeat.dto.VerifyPaymentRequest;
 import com.abhishekraj.BookMySeat.entity.Payment;
+import com.abhishekraj.BookMySeat.entity.PromoCode;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.SeatStatus;
@@ -16,16 +17,20 @@ import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
+import com.abhishekraj.BookMySeat.service.PromoCodeService;
 import com.abhishekraj.BookMySeat.service.SeatHoldService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -49,10 +54,13 @@ public class PaymentService {
 	private final PaymentConfirmationService confirmation;
 	private final PaymentProperties properties;
 	private final Clock clock;
+	private final PromoCodeService promoCodeService;
+	private final TransactionTemplate transactions;
 
 	public PaymentService(PaymentRepository paymentRepository, ShowRepository showRepository,
 			SeatRepository seatRepository, UserRepository userRepository, SeatHoldService seatHoldService,
-			PaymentGateway gateway, PaymentConfirmationService confirmation, PaymentProperties properties, Clock clock) {
+			PaymentGateway gateway, PaymentConfirmationService confirmation, PaymentProperties properties, Clock clock,
+			PromoCodeService promoCodeService, PlatformTransactionManager transactionManager) {
 		this.paymentRepository = paymentRepository;
 		this.showRepository = showRepository;
 		this.seatRepository = seatRepository;
@@ -62,6 +70,8 @@ public class PaymentService {
 		this.confirmation = confirmation;
 		this.properties = properties;
 		this.clock = clock;
+		this.promoCodeService = promoCodeService;
+		this.transactions = new TransactionTemplate(transactionManager);
 	}
 
 	/**
@@ -90,10 +100,12 @@ public class PaymentService {
 			}
 		}
 
-		// A retry (double click, page reload) gets the same open order back instead of a second one
+		// A retry (double click, page reload) gets the same open order back instead of a second one. Another code
+		// means a new order; the earlier one keeps its reserved use until it expires (it could still be paid).
+		String code = request.hasPromoCode() ? PromoCode.normalize(request.promoCode()) : null;
 		Payment open = paymentRepository
 				.findFirstByUserIdAndShowIdAndStatusOrderByCreatedAtDesc(userId, show.getId(), PaymentStatus.PENDING)
-				.filter(p -> p.getSeatIds().equals(seatIds) && !p.isExpired(now))
+				.filter(p -> p.getSeatIds().equals(seatIds) && Objects.equals(p.getPromoCode(), code) && !p.isExpired(now))
 				.orElse(null);
 		Instant expiresAt = open != null ? open.getExpiresAt() : now.plus(properties.window());
 		if (!seatHoldService.extendAll(show.getId(), seatIds, userId, Duration.between(now, expiresAt).plus(HOLD_GRACE))) {
@@ -103,12 +115,29 @@ public class PaymentService {
 			return toResponse(open);
 		}
 
-		BigDecimal amount = show.totalFor(seats); // computed here, never sent by the client
+		BigDecimal subtotal = show.totalFor(seats); // computed here, never sent by the client
+		// A refused code is a 422 before any order exists
+		BigDecimal discount = code == null ? BigDecimal.ZERO : promoCodeService.quote(userId, code, show.getId(), subtotal);
+		BigDecimal amount = subtotal.subtract(discount);
 		PaymentGateway.Order order = gateway.createOrder(toMinor(amount), properties.currency(),
 				"bms-" + userId + "-" + now.toEpochMilli());
-		Payment payment = paymentRepository.save(new Payment(userRepository.getReferenceById(userId), show, seatIds,
-				order.id(), amount, properties.currency(), now, expiresAt));
-		log.info("Checkout: order {} for {} seat(s), {} {}", order.id(), seatIds.size(), amount, properties.currency());
+		// The use is taken for real (under the code's row lock) together with saving the payment. If the code ran
+		// out since the quote, nothing is saved and the order is left unpaid: the client never sees it.
+		Payment payment = transactions.execute(status -> {
+			Payment saved = paymentRepository.save(new Payment(userRepository.getReferenceById(userId), show, seatIds,
+					order.id(), amount, properties.currency(), now, expiresAt));
+			if (code != null) {
+				PromoCodeService.Use use = promoCodeService.use(userId, code, show.getId(), subtotal);
+				if (use.discount().compareTo(discount) != 0) {
+					throw new ConflictException("The discount changed while checking out. Please try again.");
+				}
+				saved.recordPromo(use.code().getCode(), discount);
+				promoCodeService.reserved(use, userId, saved);
+			}
+			return saved;
+		});
+		log.info("Checkout: order {} for {} seat(s), {} {} (discount {})", order.id(), seatIds.size(), amount,
+				properties.currency(), discount);
 		return toResponse(payment);
 	}
 
@@ -133,7 +162,8 @@ public class PaymentService {
 	private CheckoutResponse toResponse(Payment payment) {
 		return new CheckoutResponse(payment.getOrderId(), properties.razorpay().keyId(), toMinor(payment.getAmount()),
 				payment.getCurrency(), payment.getAmount(), payment.getShow().getId(),
-				payment.getSeatIds().stream().sorted().collect(Collectors.toList()), payment.getExpiresAt());
+				payment.getSeatIds().stream().sorted().collect(Collectors.toList()), payment.getExpiresAt(),
+				payment.getDiscountAmount(), payment.getPromoCode());
 	}
 
 	private void requireEnabled() {

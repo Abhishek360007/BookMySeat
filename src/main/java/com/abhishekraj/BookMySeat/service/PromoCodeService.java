@@ -6,6 +6,7 @@ import com.abhishekraj.BookMySeat.dto.PromoCodeResponse;
 import com.abhishekraj.BookMySeat.dto.PromoPreviewRequest;
 import com.abhishekraj.BookMySeat.dto.PromoPreviewResponse;
 import com.abhishekraj.BookMySeat.entity.Booking;
+import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PromoCode;
 import com.abhishekraj.BookMySeat.entity.PromoKind;
 import com.abhishekraj.BookMySeat.entity.PromoRedemption;
@@ -32,7 +33,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Promo codes: what admins manage, the price preview, and using a code on a booking. A use is counted on the code's
@@ -41,6 +44,10 @@ import java.util.List;
  */
 @Service
 public class PromoCodeService {
+
+	// What counts towards the limits: uses by bookings, and uses held for payments in progress
+	private static final Set<PromoRedemption.Status> TAKEN =
+			EnumSet.of(PromoRedemption.Status.RESERVED, PromoRedemption.Status.REDEEMED);
 
 	/** A code taken for one booking: the locked code and what it takes off. */
 	public record Use(PromoCode code, BigDecimal discount) {}
@@ -121,12 +128,23 @@ public class PromoCodeService {
 			throw new ResourceNotFoundException("One or more seats were not found for show " + show.getId());
 		}
 		BigDecimal subtotal = show.totalFor(seats);
-		PromoCode promo = promoCodeRepository.findByCode(PromoCode.normalize(request.code()))
-				.orElseThrow(() -> new PromoCodeRefusedException("This code doesn't exist"));
-		check(promo, userId, show.getId(), subtotal);
+		PromoCode promo = quoted(userId, request.code(), show.getId(), subtotal);
 		BigDecimal discount = promo.discountOn(subtotal);
 		return new PromoPreviewResponse(promo.getCode(), promo.getDescription(), subtotal, discount,
 				subtotal.subtract(discount));
+	}
+
+	/** What the code takes off `subtotal` now, without locking or using it (checkout asks before creating an order). */
+	@Transactional(readOnly = true)
+	public BigDecimal quote(Long userId, String rawCode, Long showId, BigDecimal subtotal) {
+		return quoted(userId, rawCode, showId, subtotal).discountOn(subtotal);
+	}
+
+	private PromoCode quoted(Long userId, String rawCode, Long showId, BigDecimal subtotal) {
+		PromoCode promo = promoCodeRepository.findByCode(PromoCode.normalize(rawCode))
+				.orElseThrow(() -> new PromoCodeRefusedException("This code doesn't exist"));
+		check(promo, userId, showId, subtotal);
+		return promo;
 	}
 
 	/**
@@ -157,23 +175,71 @@ public class PromoCodeService {
 		AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "redeemed").increment());
 	}
 
+	/** Holds the use for a Razorpay order until it is paid or expires (same transaction as use()). */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void reserved(Use use, Long userId, Payment payment) {
+		redemptionRepository.save(new PromoRedemption(use.code(), userRepository.getReferenceById(userId), payment,
+				Instant.now(clock)));
+	}
+
+	/** The payment booked the seats: its reserved use now belongs to the booking. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void paymentBooked(Payment payment, Booking booking) {
+		redemptionRepository.findByPaymentId(payment.getId())
+				.filter(redemption -> redemption.getStatus() == PromoRedemption.Status.RESERVED)
+				.ifPresent(redemption -> {
+					redemption.redeem(booking);
+					AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "redeemed").increment());
+				});
+	}
+
+	/** The payment expired unpaid, or its money goes back: its reserved use is given back. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void paymentReleased(Payment payment) {
+		redemptionRepository.findByPaymentId(payment.getId())
+				.filter(redemption -> redemption.getStatus() == PromoRedemption.Status.RESERVED)
+				.ifPresent(this::release);
+	}
+
+	/**
+	 * A payment that expired (and gave its use back) was paid after all. It may take the use again only if the code
+	 * still has room for it, in total and for this person; false means the money has to go back. The caller locks the
+	 * show first, so the lock order (show, then code) is the same as for bookings and show cancellations.
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public boolean retakeForLatePayment(Payment payment) {
+		PromoRedemption redemption = redemptionRepository.findByPaymentId(payment.getId()).orElse(null);
+		if (redemption == null || redemption.getStatus() != PromoRedemption.Status.RELEASED) {
+			return true; // no code, or its use is still held
+		}
+		PromoCode promo = promoCodeRepository.findForUpdateById(redemption.getPromoCode().getId()).orElse(null);
+		if (promo == null || promo.isUsedUp() || redemptionRepository.countByPromoCodeIdAndUserIdAndStatusIn(promo.getId(),
+				payment.getUser().getId(), TAKEN) >= promo.getMaxUsesPerUser()) {
+			return false;
+		}
+		promo.use();
+		redemption.reserveAgain();
+		return true;
+	}
+
 	/** A cancelled booking (by the customer or with its show) gives its use back, in the cancel's transaction. */
 	@EventListener
 	public void onBookingCancelled(BookingCancelledEvent event) {
 		redemptionRepository.findByBookingIdAndStatus(event.bookingId(), PromoRedemption.Status.REDEEMED)
-				.ifPresent(redemption -> {
-					promoCodeRepository.findForUpdateById(redemption.getPromoCode().getId()).ifPresent(PromoCode::release);
-					redemption.release(Instant.now(clock));
-					AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "released").increment());
-				});
+				.ifPresent(this::release);
+	}
+
+	private void release(PromoRedemption redemption) {
+		promoCodeRepository.findForUpdateById(redemption.getPromoCode().getId()).ifPresent(PromoCode::release);
+		redemption.release(Instant.now(clock));
+		AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "released").increment());
 	}
 
 	private void check(PromoCode promo, Long userId, Long showId, BigDecimal subtotal) {
 		promo.refusal(Instant.now(clock), showId, subtotal).ifPresent(reason -> {
 			throw new PromoCodeRefusedException(reason);
 		});
-		long mine = redemptionRepository.countByPromoCodeIdAndUserIdAndStatus(promo.getId(), userId,
-				PromoRedemption.Status.REDEEMED);
+		long mine = redemptionRepository.countByPromoCodeIdAndUserIdAndStatusIn(promo.getId(), userId, TAKEN);
 		if (mine >= promo.getMaxUsesPerUser()) {
 			throw new PromoCodeRefusedException(promo.getMaxUsesPerUser() == 1
 					? "You've already used this code"

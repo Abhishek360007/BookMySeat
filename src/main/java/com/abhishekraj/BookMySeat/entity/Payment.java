@@ -46,6 +46,13 @@ public class Payment {
 	@Column(nullable = false, length = 3)
 	private String currency;
 
+	// A promo code's discount, already taken off `amount`
+	@Column(name = "discount_amount", nullable = false, precision = 10, scale = 2)
+	private BigDecimal discountAmount = BigDecimal.ZERO;
+
+	@Column(name = "promo_code", length = 20)
+	private String promoCode;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20)
 	private PaymentStatus status;
@@ -84,6 +91,12 @@ public class Payment {
 		this.createdAt = now;
 		this.expiresAt = expiresAt;
 		this.updatedAt = now;
+	}
+
+	/** Records the code behind the discounted amount (the amount passed to the constructor is already after it). */
+	public void recordPromo(String code, BigDecimal discount) {
+		this.promoCode = code;
+		this.discountAmount = discount;
 	}
 
 	public boolean isExpired(Instant now) {

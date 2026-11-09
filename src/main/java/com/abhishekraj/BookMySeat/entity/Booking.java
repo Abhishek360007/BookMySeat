@@ -84,6 +84,12 @@ public class Booking {
 		this.totalAmount = totalAmount.subtract(discount);
 	}
 
+	/** Paid online: the paid amount is already after the discount, so only the snapshot is recorded. */
+	public void recordPaidPromo(String code, BigDecimal discount) {
+		this.promoCode = code;
+		this.discountAmount = discount;
+	}
+
 	public void cancel() {
 		this.status = BookingStatus.CANCELLED;
 		this.cancelledAt = Instant.now();

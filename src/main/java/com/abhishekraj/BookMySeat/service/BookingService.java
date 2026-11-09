@@ -158,7 +158,8 @@ public class BookingService {
 	 * caller can record a refund in the same transaction.
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
-	public Optional<Booking> tryConfirmPaid(Long userId, Long showId, Collection<Long> seatIds, BigDecimal paidAmount) {
+	public Optional<Booking> tryConfirmPaid(Long userId, Long showId, Collection<Long> seatIds, BigDecimal paidAmount,
+			String promoCode, BigDecimal discount) {
 		Show show = lockShowForBooking(showId);
 		if (show.isCancelled() || !Instant.now(clock).isBefore(show.getStartTime())) {
 			return Optional.empty(); // the caller refunds
@@ -170,8 +171,11 @@ public class BookingService {
 		}
 
 		seats.forEach(seat -> seat.setStatus(SeatStatus.BOOKED)); // @Version still guards against a racing confirm
-		Booking booking = bookingRepository.save(
-				new Booking(userRepository.getReferenceById(userId), show, new HashSet<>(seats), paidAmount));
+		Booking paid = new Booking(userRepository.getReferenceById(userId), show, new HashSet<>(seats), paidAmount);
+		if (promoCode != null) {
+			paid.recordPaidPromo(promoCode, discount);
+		}
+		Booking booking = bookingRepository.save(paid);
 		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 			@Override
 			public void afterCommit() {

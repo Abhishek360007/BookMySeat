@@ -114,7 +114,7 @@ public class EmailTemplates {
 
 				Your bookings: %s
 				""".formatted(booking.getUser().getName(), booking.getId(), show.getTitle(), when(show.getStartTime()),
-				show.getVenue().getName(), seats, money(booking.getTotalAmount()), ticketCode, bookingsUrl());
+				show.getVenue().getName(), seats, total(booking), ticketCode, bookingsUrl());
 		String html = layout("You're booked!", """
 				<p>Hi %s,</p>
 				<table cellpadding="4" style="border-collapse:collapse">
@@ -128,7 +128,7 @@ public class EmailTemplates {
 				<p><b>Your ticket is attached.</b> Show its QR code at the entrance, or open My bookings on your phone.<br>
 				<span style="color:#646779">Ticket code: <code>%s</code></span></p>
 				%s""".formatted(esc(booking.getUser().getName()), booking.getId(), esc(show.getTitle()),
-				when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats), money(booking.getTotalAmount()),
+				when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats), esc(total(booking)),
 				esc(ticketCode), button("View my bookings", bookingsUrl())));
 		EmailMessage.Attachment ticket = new EmailMessage.Attachment("ticket-" + booking.getId() + ".png", "image/png",
 				QrCodes.png(ticketCode, 360));
@@ -300,6 +300,15 @@ public class EmailTemplates {
 	private static String seats(Booking booking) {
 		return booking.getSeats().stream().sorted(Comparator.comparing(Seat::getId))
 				.map(Seat::getSeatNumber).collect(Collectors.joining(", "));
+	}
+
+	/** "₹360.00", or "₹360.00 (₹40.00 off with TENOFF)" when a promo code was used. */
+	private static String total(Booking booking) {
+		String total = money(booking.getTotalAmount());
+		if (booking.getPromoCode() == null || booking.getDiscountAmount().signum() == 0) {
+			return total;
+		}
+		return total + " (" + money(booking.getDiscountAmount()) + " off with " + booking.getPromoCode() + ")";
 	}
 
 	private static String money(BigDecimal amount) {

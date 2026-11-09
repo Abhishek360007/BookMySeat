@@ -5,8 +5,10 @@ import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.PaymentStatus;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
+import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
 import com.abhishekraj.BookMySeat.service.BookingService;
+import com.abhishekraj.BookMySeat.service.PromoCodeService;
 import com.abhishekraj.BookMySeat.service.SeatHoldService;
 import com.abhishekraj.BookMySeat.support.AfterCommit;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -33,15 +35,20 @@ public class PaymentConfirmationService {
 	private final SeatHoldService seatHoldService;
 	private final MeterRegistry meterRegistry;
 	private final Clock clock;
+	private final PromoCodeService promoCodeService;
+	private final ShowRepository showRepository;
 
 	public PaymentConfirmationService(PaymentRepository paymentRepository, BookingService bookingService,
-			RefundService refundService, SeatHoldService seatHoldService, MeterRegistry meterRegistry, Clock clock) {
+			RefundService refundService, SeatHoldService seatHoldService, MeterRegistry meterRegistry, Clock clock,
+			PromoCodeService promoCodeService, ShowRepository showRepository) {
 		this.paymentRepository = paymentRepository;
 		this.bookingService = bookingService;
 		this.refundService = refundService;
 		this.seatHoldService = seatHoldService;
 		this.meterRegistry = meterRegistry;
 		this.clock = clock;
+		this.promoCodeService = promoCodeService;
+		this.showRepository = showRepository;
 		// At 0 from startup, so increase() counts the first one after a restart (see BookingMetrics)
 		for (String outcome : new String[] {"confirmed", "refund", "expired", "attempt_failed"}) {
 			meterRegistry.counter("payments", "outcome", outcome);
@@ -63,15 +70,30 @@ public class PaymentConfirmationService {
 			return payment; // already handled: repeat callback or duplicate webhook
 		}
 
+		// A late payment whose promo code use was given back must find room on the code again, or go back.
+		// The show is locked first (as bookings and show cancellations do), then the code.
+		if (payment.getStatus() == PaymentStatus.EXPIRED && payment.getPromoCode() != null) {
+			showRepository.findForBookingById(payment.getShow().getId());
+			if (!promoCodeService.retakeForLatePayment(payment)) {
+				payment.requireRefund(paymentId, "The promo code was used up before the late payment arrived", now);
+				count("refund");
+				log.warn("Order {} paid late ({}) but its promo code is used up: refunding", orderId, source);
+				refundService.refundAfterCommit(orderId);
+				return payment;
+			}
+		}
+
 		// Book only if every seat is still free and not held by anyone else. An EXPIRED payment can still succeed
 		// late when nobody took the seats meanwhile; otherwise the customer gets the money back.
 		Optional<Booking> booking = bookingService.tryConfirmPaid(payment.getUser().getId(), payment.getShow().getId(),
-				payment.getSeatIds(), payment.getAmount());
+				payment.getSeatIds(), payment.getAmount(), payment.getPromoCode(), payment.getDiscountAmount());
 		if (booking.isPresent()) {
 			payment.confirm(paymentId, booking.get(), now);
+			promoCodeService.paymentBooked(payment, booking.get());
 			count("confirmed");
 			log.info("Order {} paid ({}) and booked: booking {}", orderId, source, booking.get().getId());
 		} else {
+			promoCodeService.paymentReleased(payment);
 			payment.requireRefund(paymentId, "Seats were no longer available when the payment arrived", now);
 			count("refund");
 			log.warn("Order {} paid ({}) but its seats are gone: refunding", orderId, source);
@@ -93,6 +115,7 @@ public class PaymentConfirmationService {
 				.filter(payment -> payment.getStatus() == PaymentStatus.PENDING && payment.isExpired(now))
 				.ifPresent(payment -> {
 					payment.expire(now);
+					promoCodeService.paymentReleased(payment);
 					count("expired");
 					Long userId = payment.getUser().getId();
 					Long showId = payment.getShow().getId();

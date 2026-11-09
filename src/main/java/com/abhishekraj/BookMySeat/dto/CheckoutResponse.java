@@ -6,7 +6,8 @@ import java.util.List;
 
 /**
  * Everything the client needs to open Razorpay Checkout: keyId + orderId + amount (in paise).
- * The seats stay held for this user until expiresAt.
+ * The seats stay held for this user until expiresAt. totalAmount is after the promo code's discountAmount.
  */
 public record CheckoutResponse(String orderId, String razorpayKeyId, long amount, String currency,
-		BigDecimal totalAmount, Long showId, List<Long> seatIds, Instant expiresAt) {}
+		BigDecimal totalAmount, Long showId, List<Long> seatIds, Instant expiresAt, BigDecimal discountAmount,
+		String promoCode) {}
