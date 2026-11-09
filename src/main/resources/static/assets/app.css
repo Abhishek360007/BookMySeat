@@ -277,3 +277,4 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .summary .promo input { width: 12rem; text-transform: uppercase; }
 .summary .promo .form-error { flex-basis: 100%; }
 .btn-small { padding: .35rem .7rem; font-size: .9rem; }
+.promo-off { color: var(--muted); }

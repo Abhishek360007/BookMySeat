@@ -407,7 +407,8 @@ export async function renderAdminShow(showId) {
 				<tbody>${page.content.map((b) => `<tr><td>${b.id}</td><td>${esc(b.userEmail)}</td><td>${esc(b.seats.join(', '))}</td>
 					<td class="small">${esc(when.format(new Date(b.createdAt)))}</td>
 					<td class="small">${b.checkedInAt ? esc(when.format(new Date(b.checkedInAt))) : '<span class="muted">–</span>'}</td>
-					<td class="num">${esc(money.format(b.totalAmount))}</td></tr>`).join('')}
+					<td class="num">${esc(money.format(b.totalAmount))}${Number(b.discountAmount) > 0
+						? `<div class="small promo-off">${esc(money.format(b.discountAmount))} off · ${esc(b.promoCode)}</div>` : ''}</td></tr>`).join('')}
 				</tbody></table></div>
 			<div class="row spread pager">
 				<button class="btn btn-ghost" id="b-prev" ${bookingPage === 0 ? 'disabled' : ''}>Previous</button>
