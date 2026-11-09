@@ -770,7 +770,8 @@ async function renderBookings() {
 					<div>
 						<div class="row"><strong>${esc(b.showTitle)}</strong><span class="status ${esc(b.status)}">${esc(b.status)}</span></div>
 						<div class="muted small">${esc(b.venueName)} · ${esc(when.format(new Date(b.showStartTime)))}</div>
-						<div>Seats ${esc(b.seats.join(', '))} · <span class="price">${esc(money.format(b.totalAmount))}</span></div>
+						<div>Seats ${esc(b.seats.join(', '))} · <span class="price">${esc(money.format(b.totalAmount))}</span>${Number(b.discountAmount) > 0
+						? ` <span class="muted small">(${esc(money.format(b.discountAmount))} off with ${esc(b.promoCode)})</span>` : ''}</div>
 					</div>
 					${b.status === 'CONFIRMED' ? `<div class="row">
 						<a class="btn btn-primary" href="#/ticket/${b.id}">Ticket</a>
