@@ -374,8 +374,9 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | PUT | `/api/shows/{showId}/seats/layout` | Admin | Change which rows are premium and recliner; existing bookings keep their totals |
 | POST | `/api/bookings/hold` | User | Hold seats for 5 minutes |
 | POST | `/api/bookings/hold/release` | User | Release your holds |
-| POST | `/api/bookings` | User | Confirm held seats (total computed on the server); optional `Idempotency-Key` header for safe retries. Only when payments are off |
-| POST | `/api/bookings/checkout` | User | Payments on: create a Razorpay order for held seats; returns key id, order id and amount |
+| POST | `/api/promo-codes/preview` | User | Price held seats with a promo code: subtotal, discount, total; `422` with the reason when it can't be used (20 per minute per IP) |
+| POST | `/api/bookings` | User | Confirm held seats (total computed on the server, minus an optional `promoCode`); optional `Idempotency-Key` header for safe retries. Only when payments are off |
+| POST | `/api/bookings/checkout` | User | Payments on: create a Razorpay order for held seats (optional `promoCode`, its use reserved for the order); returns key id, order id and the discounted amount |
 | POST | `/api/payments/verify` | User | Report a Razorpay payment (order id, payment id, signature); idempotent |
 | GET | `/api/payments/{orderId}` | User | Payment status: `PENDING`, `CONFIRMED`, `EXPIRED`, `REFUND_PENDING`, `REFUNDED` |
 | POST | `/api/payments/webhook` | Razorpay | Server-to-server payment events, authenticated by `X-Razorpay-Signature` |
@@ -391,6 +392,9 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | GET | `/api/admin/overview` | Admin | Headline numbers: revenue and bookings (all time and last 7 days), upcoming shows and seats sold |
 | GET | `/api/admin/shows?when=UPCOMING\|PAST\|ALL&q=&page=&size=&sort=` | Admin | Shows with seats sold, confirmed bookings and revenue |
 | POST | `/api/shows/{id}/cancel` | Admin | Cancel a show: cancels and refunds its bookings and emails the customers |
+| POST | `/api/admin/promo-codes` | Admin | Create a promo code: `PERCENT` (optional `maxDiscount`) or `FLAT`, optional `minTotal`, `showId`, `validFrom` / `validUntil`, `maxUses`, `maxUsesPerUser` (default 1) |
+| GET | `/api/admin/promo-codes?page=&size=&sort=` | Admin | Promo codes with their uses, newest first |
+| POST | `/api/admin/promo-codes/{id}/disable`, `/enable` | Admin | Switch a code off or on; bookings made with it keep their discount |
 
 `401` means no valid token, and `403` means a valid token without the required role.
 
@@ -438,10 +442,11 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Safe confirm | Every confirm sends an `Idempotency-Key`, so a double click or a retry can't book twice |
+| Promo codes | A code field under the held seats: **Apply** shows the discount and the new total on the button, a refused code is explained next to the field, and what you type survives the 10 s refresh. My bookings shows what a code took off |
 | Waitlist | A sold-out show offers **Join waitlist** (1 to 6 seats) and then shows your place in line; an offer appears within one refresh as held seats with a countdown, to book or **Decline**. My bookings lists your places in line |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
-| Admin pages | Dashboard, new show form and a page per show for admins (see [Admin dashboard](#admin-dashboard)) |
+| Admin pages | Dashboard, new show form, a page per show, and **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) for admins (see [Admin dashboard](#admin-dashboard)) |
 | E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned |
 | Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
 | Passwords | "Forgot password?" in the login dialog, a reset page for the emailed link, and an account page (click your email in the top bar) to change the password |
@@ -451,7 +456,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 
 ### Accessibility
 
-Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) runs [axe-core](https://github.com/dequelabs/axe-core) (WCAG 2.2 A and AA rules plus axe's best practices) on 20 pages, from the seat map and the login dialog to the ticket and the admin check-in, each on a desktop and a phone screen in the light and the dark theme, and checks that each page fits 320 px wide (a 1280 px window at 400% zoom) without sideways scrolling: 100 checks. [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) books two seats without the mouse and checks where focus goes on the way.
+Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) runs [axe-core](https://github.com/dequelabs/axe-core) (WCAG 2.2 A and AA rules plus axe's best practices) on 22 pages, from the seat map, a refused promo code and the login dialog to the ticket and the admin promo codes, each on a desktop and a phone screen in the light and the dark theme, and checks that each page fits 320 px wide (a 1280 px window at 400% zoom) without sideways scrolling: 110 checks. The promo codes page failed that last check at first: a visually hidden table heading made it 124 px too wide, because the scrolling table around it wasn't positioned. [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) books two seats without the mouse and checks where focus goes on the way.
 
 | What | How |
 |---|---|
@@ -464,7 +469,7 @@ Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y
 
 The first audit found 3 problems: that contrast issue, an admin table that scrolled sideways on phones but couldn't be reached with the keyboard, and pages without an `h1`. The keyboard test found what axe can't: the focus lost on every seat map refresh.
 
-**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. [`e2e/waitlist-flow.mjs`](e2e/waitlist-flow.mjs) builds a sold-out show, joins its waitlist in the browser, cancels the booking and waits for the offer to appear on the page with its countdown (and in Mailpit), books it, then gives a second person an offer that they decline. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) and [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) check accessibility (see [Accessibility](#accessibility)). All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
+**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. [`e2e/waitlist-flow.mjs`](e2e/waitlist-flow.mjs) builds a sold-out show, joins its waitlist in the browser, cancels the booking and waits for the offer to appear on the page with its countdown (and in Mailpit), books it, then gives a second person an offer that they decline. [`e2e/promo-flow.mjs`](e2e/promo-flow.mjs) creates a code on the admin page, has a customer told why a wrong code is refused, apply the real one, book at the discounted price and then lose a second code to someone who booked first (refused at confirm, booked at full price), and checks the uses and discounts on the admin pages. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) and [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) check accessibility (see [Accessibility](#accessibility)). All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
 
 ```powershell
 # app running on port 8080 with the demo data (scripts/seed-demo.ps1)
@@ -608,19 +613,23 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | HTTP (MockMvc + Testcontainers) | `SeatCategoryApiTest` | Rows from the back become recliners then premium, prices per category, aisles, invalid layouts, totals that add each seat's price and survive price and layout changes |
 | HTTP (MockMvc + Testcontainers) | `WaitlistApiTest` | Joining only when sold out and once per show (also 6 joins at once), places in line, offers to the first request that fits, a rolled-back cancel leaving no offer or hold, two cancels at once offering to two people (repeated 5 times), expiry, decline and partial booking passing seats on, a hold running out, closed lines |
 | HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database, login still works, and a customer can still cancel (the waitlist offer waits) |
+| Unit (milliseconds) | `PromoCodeTest` | Percentages rounded to the paisa, caps, at least ₹1 left to pay, every reason a code is refused, uses stopping at the limit and given back |
+| HTTP (MockMvc + Testcontainers) | `PromoCodeApiTest` | Creating codes (capitals, duplicates, invalid combinations, admin only), the price preview and its reasons, switching off and on, the preview's rate limit |
+| HTTP (MockMvc + Testcontainers) | `PromoCodeBookingApiTest` | The discount on the booking, a refused code booking nothing, per-person limits, uses given back on cancel and show cancel, the code in the idempotency fingerprint, 12 people racing for 5 uses and one person racing themselves |
+| HTTP (MockMvc + Testcontainers, fake Razorpay) | `PromoCodePaymentApiTest` | Razorpay charged the discounted amount, the use reserved then redeemed, given back on expiry, a refund and a cancel; late payments that take the use again or are refunded; the email and admin bookings showing the discount |
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V15) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V18) applies to an empty database |
 | HTTP (MockMvc + Testcontainers) | `BusinessMetricsTest` | Seats by category, booking value, cancellations by customer or show, counters at 0 from startup, nothing counted for a rolled-back transaction, outbox gauges |
 | HTTP (MockMvc + Testcontainers) | `LoginConnectionTest` | The password check runs with no transaction open, so a login doesn't hold a database connection during BCrypt |
 | Integration (real HTTP + fake OTLP gateway) | `OtlpExportTest` | Metrics and traces arrive gzipped with the auth header and resource attributes; the request's span carries its request id, its database queries are spans with `?` instead of parameter values, health probes make none, the log line has the trace id |
 | Browser (Playwright, in CI) | [`e2e/start-page.mjs`](e2e/start-page.mjs) | The wake-up start page against a fake app that is awake (straight through), asleep (wait screen, progress, live status), deploying (Render error pages don't count) and down (clear failure, focused retry); phone width, dark mode, no JavaScript errors or CSP violations |
-| Browser (Playwright + axe-core) | [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) | No WCAG 2.2 AA violations on 20 pages, phone and desktop, light and dark, and no sideways scrolling at 320 px wide (100 checks) |
+| Browser (Playwright + axe-core) | [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) | No WCAG 2.2 AA violations on 22 pages, phone and desktop, light and dark, and no sideways scrolling at 320 px wide (110 checks) |
 | Browser (Playwright) | [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) | Booking with the keyboard only: skip link, focus after page changes, arrow keys in the seat map, focus kept through the 10 s refresh and the login dialog, the hold announced, reduced motion, forced colours |
 | Rules (`promtool`, in CI) | [`monitoring/alerts.test.yaml`](monitoring/alerts.test.yaml) | Each alert fires on a bad case and stays quiet on a normal one, including the first event after a restart |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **93% of lines, 80% of branches** across 154 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **94% of lines, 81% of branches** across 182 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
