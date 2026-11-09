@@ -243,6 +243,40 @@ sequenceDiagram
 | Redis down? | Offers need holds, so none are made, but the customer's cancellation still succeeds and the job makes the offer once Redis is back (tested) |
 | Counted? | `waitlist.joined` and `waitlist.offers` by result: `offered`, `claimed`, `expired`, `declined`, `closed` |
 
+## Promo codes
+
+Admins create discount codes on the **Promo codes** page (or `POST /api/admin/promo-codes`): a percentage, optionally capped (`20%, at most ₹150`), or a fixed amount (`₹50 off`), with optional limits: a minimum total, one show only, an end date, a number of uses in total and per person (once, by default). Customers type a code under their held seats, see the new total before they book, and the booking (and its payment) keeps the discount and the code, like its price.
+
+```mermaid
+sequenceDiagram
+    participant C as Customer
+    participant A as App
+    participant P as Postgres
+    participant R as Razorpay
+    C->>A: preview code (no use taken, rate-limited)
+    A-->>C: ₹600.00 - ₹120.00 = ₹480.00
+    C->>A: checkout with the code
+    A->>R: order for ₹480.00
+    A->>P: lock the code's row, check limits, uses + 1, payment + RESERVED use (one transaction)
+    R-->>A: paid (callback or webhook)
+    A->>P: booking at ₹480.00 keeps the code, use REDEEMED
+    Note over A,P: order expires unpaid or money goes back: use RELEASED, uses - 1
+```
+
+| Question | Answer |
+|---|---|
+| Can a code be used more often than its limit? | No. Every use is counted on the code's row while it is locked (`FOR UPDATE`), so bookings with the same code take turns, and a `CHECK (uses <= max_uses)` in the database refuses anything beyond it. Tested with 12 people booking at the same moment with a 5-use code: exactly 5 get it. Both race tests fail when the lock is removed: the bookings then collide on the code's `@Version` and most of them fail with `409` instead of being told the code ran out |
+| And one person booking several times at once? | The per-person limit is checked under the same lock, so 4 parallel bookings by one person with a once-per-person code give one discount |
+| What does a customer see when a code can't be used? | `422` with the reason: doesn't exist, not valid yet, expired, for another show, fully used, already used by you, total too small. In the web app it appears next to the field; nothing is booked and the seats stay held |
+| With online payment? | The use is reserved when the Razorpay order is created, in the same transaction as the payment row, and Razorpay is asked for the discounted amount. A code that ran out between the price check and that transaction is a `422` and the order is never shown |
+| Payment never completed? | When the order expires the use is given back; if the money arrives late anyway, it takes the use again only if the code still has room, otherwise it is refunded (tested both ways) |
+| Booking cancelled? | Its use is given back, for a customer's cancellation and for a cancelled show alike. A paid booking is refunded the amount actually paid |
+| Can a discount make a booking free? | No: it never leaves less than ₹1 to pay (Razorpay's minimum), and percentages are rounded to the paisa (`BigDecimal`, `HALF_UP`) |
+| Guessing codes? | The price preview is rate-limited per IP (20 a minute) like the login |
+| Retries? | The code is part of the `Idempotency-Key` fingerprint: the same key with another code is `422`. Checkout with the same seats and code returns the open order; another code makes a new one |
+| Switched off? | New bookings can't use it; bookings made with it keep their discount |
+| Counted? | `promo_codes.uses` by result: `redeemed`, `refused`, `released` |
+
 ## Emails
 
 Booking confirmed, booking cancelled, refund completed, waitlist offer and waitlist closed, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
@@ -294,7 +328,7 @@ Every response also carries `X-Content-Type-Options: nosniff`, `Referrer-Policy:
 
 **Redis for holds, PostgreSQL for bookings.** Holds are short-lived, so Redis expires them with no cleanup job, and a Lua script makes "check all seats, then hold all" a single atomic step. Confirmed bookings are permanent records, so they live in PostgreSQL, the source of truth.
 
-**Price is snapshotted.** `totalAmount = price × seats` is computed on the server when the booking is confirmed and is never recalculated. If an admin changes a show's price, past bookings keep what the customer actually paid, and the client can never send its own amount.
+**Price is snapshotted.** `totalAmount = price × seats` is computed on the server when the booking is confirmed and is never recalculated. If an admin changes a show's price, past bookings keep what the customer actually paid, and the client can never send its own amount. A promo code's discount is snapshotted the same way: the booking keeps the discount and the code, and `totalAmount` is what was paid after it.
 
 **`BigDecimal` for money.** In `double`, `0.1 + 0.2` is `0.30000000000000004`. Money is `BigDecimal` in Java and `NUMERIC(10,2)` in the database, and the API rejects more than 2 decimal places.
 
