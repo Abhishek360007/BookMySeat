@@ -278,8 +278,11 @@ async function renderShow(showId) {
 	}
 	let seats = await api(`/api/shows/${showId}/seats`);
 	const selected = new Set();
-	let hold = null; // { seatIds, seatNumbers, expiresAt, idempotencyKey, offer }
+	let hold = null; // { seatIds, seatNumbers, expiresAt, idempotencyKey, offer, promo }
 	let busy = false;
+	// The promo code field: what is typed survives the redraws (every 10 s), and why a code was refused
+	let promoDraft = '';
+	let promoError = '';
 	let wait = null; // your place on this show's waitlist: { status, position, seats, offeredSeatIds, ... }
 
 	// A waitlist offer means the seats are already held for you: the page goes on as if you had just held them
@@ -350,10 +353,16 @@ async function renderShow(showId) {
 	// Redraws replace the seat map and summary, so whatever had keyboard focus there gets it back afterwards
 	let focusKey = null;
 	let tabStop = null; // the seat that Tab lands on: the one last focused
+	let focusNext = null; // set by an action that moves focus on purpose (e.g. to Remove after applying a code)
 	const rememberFocus = () => {
+		if (focusNext) { // wins over whatever had focus while the action ran
+			focusKey = { summary: focusNext };
+			focusNext = null;
+			return;
+		}
 		const el = document.activeElement;
 		if (el?.closest('#seatmap')) focusKey = { seat: el.dataset.id };
-		else if (el?.closest('#summary')) focusKey = { summary: el.id };
+		else if (el?.closest('#summary')) focusKey = { summary: el.id, caret: el.selectionStart ?? null };
 		else if (el && el !== document.body && !el.closest('dialog')) focusKey = null; // focus went elsewhere on purpose
 	};
 	const restoreFocus = () => {
@@ -364,6 +373,7 @@ async function renderShow(showId) {
 				?? summary.querySelector('.btn-primary:not([disabled])') ?? summary.querySelector('button:not([disabled]), select');
 		if (el && !el.disabled) { // a button disabled while busy: try again after the next redraw
 			el.focus();
+			if (focusKey.caret != null && el.setSelectionRange) el.setSelectionRange(focusKey.caret, focusKey.caret);
 			focusKey = null;
 		}
 	};
@@ -390,15 +400,18 @@ async function renderShow(showId) {
 		drawPrices();
 		const summary = document.getElementById('summary');
 		if (hold) {
-			const action = state.config.paymentsEnabled ? `Pay ${total(hold.seatIds)}` : `Confirm booking · ${total(hold.seatIds)}`;
+			const sum = hold.promo ? money.format(hold.promo.total) : total(hold.seatIds);
+			const action = state.config.paymentsEnabled ? `Pay ${sum}` : `Confirm booking · ${sum}`;
 			summary.innerHTML = `
 				<div>${hold.offer ? 'From the waitlist: ' : ''}<strong>${esc(hold.seatNumbers.join(', '))}</strong> held for you · <span class="timer" id="timer"></span></div>
+				${promoHtml()}
 				<div class="row">
 					<button class="btn btn-ghost" id="release" ${busy ? 'disabled' : ''}>${hold.offer ? 'Decline' : 'Release'}</button>
 					<button class="btn btn-primary" id="confirm" ${busy ? 'disabled' : ''}>${esc(action)}</button>
 				</div>`;
 			document.getElementById('release').onclick = release;
 			document.getElementById('confirm').onclick = state.config.paymentsEnabled ? pay : confirm;
+			bindPromo();
 			tick();
 		} else if (soldOut() && wait?.status === 'WAITING') {
 			summary.innerHTML = `
@@ -423,6 +436,48 @@ async function renderShow(showId) {
 			document.getElementById('hold').onclick = holdSeats;
 		}
 		restoreFocus();
+	};
+
+	// A code field under the held seats; once applied, the discount with a way to remove it
+	const promoHtml = () => (hold.promo
+		? `<div class="promo" id="promo-applied"><span><strong>${esc(hold.promo.code)}</strong> applied:
+				${esc(money.format(hold.promo.discount))} off${hold.promo.description ? ` (${esc(hold.promo.description)})` : ''}
+				<span class="muted small">· was ${esc(money.format(hold.promo.subtotal))}</span></span>
+				<button type="button" class="btn btn-ghost btn-small" id="promo-remove" ${busy ? 'disabled' : ''}
+					aria-label="Remove promo code ${esc(hold.promo.code)}">Remove</button></div>`
+		: `<form class="promo" id="promo-form" novalidate>
+				<label for="promo-code" class="small">Promo code</label>
+				<input id="promo-code" name="code" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false"
+					value="${esc(promoDraft)}" ${promoError ? 'aria-invalid="true" aria-describedby="promo-error"' : ''}>
+				<button class="btn btn-ghost btn-small" id="promo-apply" ${busy ? 'disabled' : ''}>Apply</button>
+				${promoError ? `<p class="form-error" id="promo-error">${esc(promoError)}</p>` : ''}
+			</form>`);
+
+	const bindPromo = () => {
+		const form = document.getElementById('promo-form');
+		if (form) {
+			form.code.oninput = () => { promoDraft = form.code.value; };
+			form.onsubmit = applyPromo;
+		}
+		const remove = document.getElementById('promo-remove');
+		if (remove) {
+			remove.onclick = () => {
+				hold.promo = null;
+				hold.idempotencyKey = uuid(); // another price: not a retry of the earlier request
+				focusNext = 'promo-code';
+				announce(`Promo code removed. Total ${total(hold.seatIds)}.`);
+				draw();
+			};
+		}
+	};
+
+	// A code refused when booking or paying (used up meanwhile, say): back to the field, with the reason
+	const promoRefused = (error) => {
+		hold.promo = null;
+		hold.idempotencyKey = uuid();
+		promoError = error.message;
+		focusNext = 'promo-code';
+		announce(`Promo code not applied: ${error.message}`, 'error');
 	};
 
 	const reload = async () => {
@@ -468,6 +523,7 @@ async function renderShow(showId) {
 			const seatIds = [...selected];
 			const response = await api('/api/bookings/hold', { method: 'POST', auth: true, body: { showId: Number(showId), seatIds } });
 			hold = { ...response, idempotencyKey: uuid() };
+			promoError = '';
 			selected.clear();
 			await reload();
 			announce(`Seats ${hold.seatNumbers.join(', ')} are held for you for ${minutesLeft()}.`);
@@ -506,13 +562,50 @@ async function renderShow(showId) {
 		});
 	}
 
+	// Checks the code and shows the new total; nothing is used up until booking (or paying)
+	async function applyPromo(event) {
+		event.preventDefault();
+		const code = promoDraft.trim();
+		if (!code) {
+			promoError = 'Type a code first.';
+			focusNext = 'promo-code';
+			announce(promoError, 'error');
+			draw();
+			return;
+		}
+		await run(async () => {
+			try {
+				hold.promo = await api('/api/promo-codes/preview', {
+					method: 'POST', auth: true, body: { code, showId: Number(showId), seatIds: hold.seatIds },
+				});
+				hold.idempotencyKey = uuid();
+				promoDraft = '';
+				promoError = '';
+				focusNext = 'promo-remove';
+				announce(`Code ${hold.promo.code} applied: ${money.format(hold.promo.discount)} off. New total ${money.format(hold.promo.total)}.`);
+			} catch (e) {
+				if (e.status !== 422 && e.status !== 429) throw e;
+				promoError = e.message;
+				focusNext = 'promo-code';
+				announce(`Promo code not applied: ${e.message}`, 'error');
+			}
+		});
+	}
+
 	// Payments off: confirm directly. The same Idempotency-Key for this hold makes a retry or double click safe.
 	async function confirm() {
 		await run(async () => {
-			const booking = await api('/api/bookings', {
-				method: 'POST', auth: true, headers: { 'Idempotency-Key': hold.idempotencyKey },
-				body: { showId: Number(showId), seatIds: hold.seatIds },
-			});
+			let booking;
+			try {
+				booking = await api('/api/bookings', {
+					method: 'POST', auth: true, headers: { 'Idempotency-Key': hold.idempotencyKey },
+					body: { showId: Number(showId), seatIds: hold.seatIds, promoCode: hold.promo?.code },
+				});
+			} catch (e) {
+				if (e.status !== 422 || !hold.promo) throw e;
+				promoRefused(e);
+				return;
+			}
 			stopTimers();
 			showSuccess(booking.seats, booking.totalAmount, booking.id);
 		});
@@ -521,7 +614,16 @@ async function renderShow(showId) {
 	// Payments on: checkout -> Razorpay Checkout -> verify. The webhook confirms too, even if this page is closed.
 	async function pay() {
 		await run(async () => {
-			const order = await api('/api/bookings/checkout', { method: 'POST', auth: true, body: { showId: Number(showId), seatIds: hold.seatIds } });
+			let order;
+			try {
+				order = await api('/api/bookings/checkout', {
+					method: 'POST', auth: true, body: { showId: Number(showId), seatIds: hold.seatIds, promoCode: hold.promo?.code },
+				});
+			} catch (e) {
+				if (e.status !== 422 || !hold.promo) throw e;
+				promoRefused(e);
+				return;
+			}
 			hold.expiresAt = order.expiresAt;
 			await loadScript('https://checkout.razorpay.com/v1/checkout.js');
 			await new Promise((resolve) => {
@@ -531,7 +633,7 @@ async function renderShow(showId) {
 					amount: order.amount,
 					currency: order.currency,
 					name: 'BookMySeat',
-					description: `${show.title} · ${hold.seatNumbers.join(', ')}`,
+					description: `${show.title} · ${hold.seatNumbers.join(', ')}${order.promoCode ? ` · ${order.promoCode}` : ''}`,
 					prefill: { email: state.user.email, name: state.user.name },
 					theme: { color: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() },
 					handler: async (result) => {
@@ -561,7 +663,7 @@ async function renderShow(showId) {
 		} else if (payment.status.startsWith('REFUND')) {
 			stopTimers();
 			app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">↩</div><h1>Seats no longer available</h1>
-				<p>Your payment arrived after the seats were taken, so it is being refunded in full.</p>
+				<p>Your payment arrived too late to book these seats (they were taken, or the promo code ran out), so it is being refunded in full.</p>
 				<a class="btn btn-primary" href="#/">Back to shows</a></div>`;
 			focusStart(app.querySelector('h1'));
 		}

@@ -271,3 +271,9 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	.seat:focus-visible { outline: 3px solid Highlight; }
 	.bar span { background: Highlight; forced-color-adjust: none; }
 }
+
+/* Promo code under the held seats: its own line in the summary */
+.summary .promo { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.summary .promo input { width: 12rem; text-transform: uppercase; }
+.summary .promo .form-error { flex-basis: 100%; }
+.btn-small { padding: .35rem .7rem; font-size: .9rem; }
