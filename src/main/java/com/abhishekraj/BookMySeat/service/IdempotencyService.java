@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.service;
 
+import com.abhishekraj.BookMySeat.entity.PromoCode;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.IdempotencyKeyReusedException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -43,6 +44,12 @@ public class IdempotencyService {
 	/** What the request is about: the same key must always mean the same show and seats. */
 	public static String fingerprint(Long showId, Collection<Long> seatIds) {
 		return showId + ":" + seatIds.stream().distinct().sorted().map(String::valueOf).collect(Collectors.joining(","));
+	}
+
+	/** ... and the same promo code (a request without one has the same fingerprint as before codes existed). */
+	public static String fingerprint(Long showId, Collection<Long> seatIds, String promoCode) {
+		String base = fingerprint(showId, seatIds);
+		return promoCode == null || promoCode.isBlank() ? base : base + ":" + PromoCode.normalize(promoCode);
 	}
 
 	/**

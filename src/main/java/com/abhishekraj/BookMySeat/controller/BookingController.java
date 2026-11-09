@@ -47,8 +47,9 @@ public class BookingController {
 	}
 
 	@Operation(summary = "Confirm held seats into a booking",
-			description = "The total is computed on the server. Send an optional Idempotency-Key header to make retries safe: "
-					+ "the same key with the same seats returns the original booking (header Idempotent-Replayed: true).")
+			description = "The total is computed on the server, minus an optional promoCode (422 with the reason when it "
+					+ "can't be used). Send an optional Idempotency-Key header to make retries safe: the same key with the "
+					+ "same seats and code returns the original booking (header Idempotent-Replayed: true).")
 	@PostMapping
 	public ResponseEntity<BookingResponse> confirm(@AuthenticationPrincipal Jwt jwt,
 			@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
@@ -61,7 +62,7 @@ public class BookingController {
 			return ResponseEntity.status(HttpStatus.CREATED).body(bookingService.confirm(userId, request));
 		}
 
-		String fingerprint = IdempotencyService.fingerprint(request.showId(), request.seatIds());
+		String fingerprint = IdempotencyService.fingerprint(request.showId(), request.seatIds(), request.promoCode());
 		Optional<Long> earlier = idempotencyService.begin(userId, idempotencyKey, fingerprint);
 		if (earlier.isPresent()) {
 			return ResponseEntity.status(HttpStatus.CREATED).header("Idempotent-Replayed", "true")

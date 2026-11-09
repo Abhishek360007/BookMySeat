@@ -5,19 +5,27 @@ import com.abhishekraj.BookMySeat.dto.PromoCodeRequest;
 import com.abhishekraj.BookMySeat.dto.PromoCodeResponse;
 import com.abhishekraj.BookMySeat.dto.PromoPreviewRequest;
 import com.abhishekraj.BookMySeat.dto.PromoPreviewResponse;
+import com.abhishekraj.BookMySeat.entity.Booking;
 import com.abhishekraj.BookMySeat.entity.PromoCode;
 import com.abhishekraj.BookMySeat.entity.PromoKind;
+import com.abhishekraj.BookMySeat.entity.PromoRedemption;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.PromoCodeRefusedException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.PromoCodeRepository;
+import com.abhishekraj.BookMySeat.repository.PromoRedemptionRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
+import com.abhishekraj.BookMySeat.repository.UserRepository;
+import com.abhishekraj.BookMySeat.support.AfterCommit;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -26,20 +34,38 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * Promo codes: what admins manage, the price preview, and using a code on a booking. A use is counted on the code's
+ * row while that row is locked (FOR UPDATE), so bookings with the same code take turns and neither the total limit
+ * nor the per-person limit can be overrun by bookings at the same moment. A cancelled booking gives its use back.
+ */
 @Service
 public class PromoCodeService {
 
+	/** A code taken for one booking: the locked code and what it takes off. */
+	public record Use(PromoCode code, BigDecimal discount) {}
+
 	private final PromoCodeRepository promoCodeRepository;
+	private final PromoRedemptionRepository redemptionRepository;
 	private final ShowRepository showRepository;
 	private final SeatRepository seatRepository;
+	private final UserRepository userRepository;
+	private final MeterRegistry meterRegistry;
 	private final Clock clock;
 
-	public PromoCodeService(PromoCodeRepository promoCodeRepository, ShowRepository showRepository,
-			SeatRepository seatRepository, Clock clock) {
+	public PromoCodeService(PromoCodeRepository promoCodeRepository, PromoRedemptionRepository redemptionRepository,
+			ShowRepository showRepository, SeatRepository seatRepository, UserRepository userRepository,
+			MeterRegistry meterRegistry, Clock clock) {
 		this.promoCodeRepository = promoCodeRepository;
+		this.redemptionRepository = redemptionRepository;
 		this.showRepository = showRepository;
 		this.seatRepository = seatRepository;
+		this.userRepository = userRepository;
+		this.meterRegistry = meterRegistry;
 		this.clock = clock;
+		for (String result : new String[] {"redeemed", "refused", "released"}) {
+			meterRegistry.counter("promo_codes.uses", "result", result); // at 0 from startup, see BookingMetrics
+		}
 	}
 
 	@Transactional
@@ -97,12 +123,62 @@ public class PromoCodeService {
 		BigDecimal subtotal = show.totalFor(seats);
 		PromoCode promo = promoCodeRepository.findByCode(PromoCode.normalize(request.code()))
 				.orElseThrow(() -> new PromoCodeRefusedException("This code doesn't exist"));
-		promo.refusal(Instant.now(clock), show.getId(), subtotal).ifPresent(reason -> {
-			throw new PromoCodeRefusedException(reason);
-		});
+		check(promo, userId, show.getId(), subtotal);
 		BigDecimal discount = promo.discountOn(subtotal);
 		return new PromoPreviewResponse(promo.getCode(), promo.getDescription(), subtotal, discount,
 				subtotal.subtract(discount));
+	}
+
+	/**
+	 * Takes one use of the code for a booking of `subtotal`, inside the booking's transaction (the row lock is held
+	 * until it commits; a rollback gives the use back by itself). Throws PromoCodeRefusedException when it can't be used.
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public Use use(Long userId, String rawCode, Long showId, BigDecimal subtotal) {
+		PromoCode promo = promoCodeRepository.findForUpdateByCode(PromoCode.normalize(rawCode)).orElse(null);
+		try {
+			if (promo == null) {
+				throw new PromoCodeRefusedException("This code doesn't exist");
+			}
+			check(promo, userId, showId, subtotal);
+		} catch (PromoCodeRefusedException ex) {
+			meterRegistry.counter("promo_codes.uses", "result", "refused").increment();
+			throw ex;
+		}
+		promo.use();
+		return new Use(promo, promo.discountOn(subtotal));
+	}
+
+	/** Records the use on the booking it was taken for (same transaction as use()). */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void redeemed(Use use, Long userId, Booking booking) {
+		redemptionRepository.save(new PromoRedemption(use.code(), userRepository.getReferenceById(userId), booking,
+				Instant.now(clock)));
+		AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "redeemed").increment());
+	}
+
+	/** A cancelled booking (by the customer or with its show) gives its use back, in the cancel's transaction. */
+	@EventListener
+	public void onBookingCancelled(BookingCancelledEvent event) {
+		redemptionRepository.findByBookingIdAndStatus(event.bookingId(), PromoRedemption.Status.REDEEMED)
+				.ifPresent(redemption -> {
+					promoCodeRepository.findForUpdateById(redemption.getPromoCode().getId()).ifPresent(PromoCode::release);
+					redemption.release(Instant.now(clock));
+					AfterCommit.run(() -> meterRegistry.counter("promo_codes.uses", "result", "released").increment());
+				});
+	}
+
+	private void check(PromoCode promo, Long userId, Long showId, BigDecimal subtotal) {
+		promo.refusal(Instant.now(clock), showId, subtotal).ifPresent(reason -> {
+			throw new PromoCodeRefusedException(reason);
+		});
+		long mine = redemptionRepository.countByPromoCodeIdAndUserIdAndStatus(promo.getId(), userId,
+				PromoRedemption.Status.REDEEMED);
+		if (mine >= promo.getMaxUsesPerUser()) {
+			throw new PromoCodeRefusedException(promo.getMaxUsesPerUser() == 1
+					? "You've already used this code"
+					: "You've already used this code " + promo.getMaxUsesPerUser() + " times");
+		}
 	}
 
 	private static String blankToNull(String text) {

@@ -49,6 +49,7 @@ public class BookingService {
 	private final long cancelCutoffMinutes;
 	private final ApplicationEventPublisher events;
 	private final BookingMetrics bookingMetrics;
+	private final PromoCodeService promoCodeService;
 
 	// Refusal counters at /actuator/metrics (booking counts: BookingMetrics). Tags stay low-cardinality.
 	private final Counter conflictHoldMissing;
@@ -59,7 +60,8 @@ public class BookingService {
 	public BookingService(BookingRepository bookingRepository, SeatRepository seatRepository,
 			ShowRepository showRepository, UserRepository userRepository, SeatHoldService seatHoldService,
 			Clock clock, @Value("${booking.cancel-cutoff-minutes}") long cancelCutoffMinutes,
-			MeterRegistry meterRegistry, BookingMetrics bookingMetrics, ApplicationEventPublisher events) {
+			MeterRegistry meterRegistry, BookingMetrics bookingMetrics, ApplicationEventPublisher events,
+			PromoCodeService promoCodeService) {
 		this.bookingRepository = bookingRepository;
 		this.seatRepository = seatRepository;
 		this.showRepository = showRepository;
@@ -69,6 +71,7 @@ public class BookingService {
 		this.cancelCutoffMinutes = cancelCutoffMinutes;
 		this.events = events;
 		this.bookingMetrics = bookingMetrics;
+		this.promoCodeService = promoCodeService;
 		this.conflictHoldMissing = meterRegistry.counter("booking.conflicts", "reason", "hold_missing");
 		this.conflictAlreadyBooked = meterRegistry.counter("booking.conflicts", "reason", "already_booked");
 		this.holdSuccess = meterRegistry.counter("seat.holds", "result", "success");
@@ -124,8 +127,17 @@ public class BookingService {
 			seat.setStatus(SeatStatus.BOOKED); // @Version is checked and bumped on commit
 		}
 
-		Booking booking = bookingRepository.save(
-				new Booking(userRepository.getReferenceById(userId), show, new HashSet<>(seats)));
+		Booking booking = new Booking(userRepository.getReferenceById(userId), show, new HashSet<>(seats));
+		PromoCodeService.Use promo = null;
+		if (request.hasPromoCode()) {
+			// Last, so a seat conflict above never waits on the code's row lock
+			promo = promoCodeService.use(userId, request.promoCode(), show.getId(), booking.getTotalAmount());
+			booking.applyPromo(promo.code().getCode(), promo.discount());
+		}
+		booking = bookingRepository.save(booking);
+		if (promo != null) {
+			promoCodeService.redeemed(promo, userId, booking);
+		}
 
 		// Release the Redis holds only if the database commit succeeds
 		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

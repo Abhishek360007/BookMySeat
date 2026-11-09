@@ -43,6 +43,13 @@ public class Booking {
 	@Column(name = "total_amount", nullable = false, precision = 10, scale = 2)
 	private BigDecimal totalAmount;
 
+	// What a promo code took off (total_amount is already after it) and which code: snapshots too
+	@Column(name = "discount_amount", nullable = false, precision = 10, scale = 2)
+	private BigDecimal discountAmount = BigDecimal.ZERO;
+
+	@Column(name = "promo_code", length = 20)
+	private String promoCode;
+
 	@Column(nullable = false)
 	private Instant createdAt;
 
@@ -68,6 +75,13 @@ public class Booking {
 		this.status = BookingStatus.CONFIRMED;
 		this.totalAmount = show.totalFor(seats); // each seat at its category's price
 		this.createdAt = Instant.now();
+	}
+
+	/** A promo code took `discount` off: the total becomes what is left to pay. */
+	public void applyPromo(String code, BigDecimal discount) {
+		this.promoCode = code;
+		this.discountAmount = discount;
+		this.totalAmount = totalAmount.subtract(discount);
 	}
 
 	public void cancel() {
