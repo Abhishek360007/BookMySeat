@@ -15,7 +15,8 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 
-// Per-IP limits on the auth endpoints: slows password guessing, sign-up spam and verification-email floods.
+// Per-IP limits on the auth endpoints: slows password guessing, sign-up spam and verification-email floods;
+// also on trying promo codes.
 // The client IP is getRemoteAddr(); in prod, server.forward-headers-strategy makes that the
 // address from Render's proxy (X-Forwarded-For).
 @Slf4j
@@ -38,7 +39,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 			@Value("${rate-limit.forgot-password.max-requests}") int forgotMax,
 			@Value("${rate-limit.forgot-password.window-seconds}") long forgotWindow,
 			@Value("${rate-limit.change-password.max-requests}") int changeMax,
-			@Value("${rate-limit.change-password.window-seconds}") long changeWindow) {
+			@Value("${rate-limit.change-password.window-seconds}") long changeWindow,
+			@Value("${rate-limit.promo-code.max-requests}") int promoMax,
+			@Value("${rate-limit.promo-code.window-seconds}") long promoWindow) {
 		this.rateLimiter = rateLimiter;
 		this.meterRegistry = meterRegistry;
 		this.rules = Map.of(
@@ -48,7 +51,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 				"/api/users/me/verification-email", new Rule("verification-email", resendMax, Duration.ofSeconds(resendWindow)),
 				"/api/auth/forgot-password", new Rule("forgot-password", forgotMax, Duration.ofSeconds(forgotWindow)),
 				// guessing the current password with a stolen access token
-				"/api/users/me/password", new Rule("change-password", changeMax, Duration.ofSeconds(changeWindow)));
+				"/api/users/me/password", new Rule("change-password", changeMax, Duration.ofSeconds(changeWindow)),
+				// guessing promo codes
+				"/api/promo-codes/preview", new Rule("promo-code", promoMax, Duration.ofSeconds(promoWindow)));
 	}
 
 	@Override

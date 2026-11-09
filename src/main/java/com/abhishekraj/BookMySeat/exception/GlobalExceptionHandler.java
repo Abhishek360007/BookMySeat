@@ -102,6 +102,13 @@ public class GlobalExceptionHandler {
 		return problem;
 	}
 
+	@ExceptionHandler(PromoCodeRefusedException.class)
+	public ProblemDetail handlePromoCodeRefused(PromoCodeRefusedException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+		problem.setTitle("Promo code not applicable");
+		return problem;
+	}
+
 	@ExceptionHandler(InvalidSignatureException.class)
 	public ProblemDetail handleInvalidSignature(InvalidSignatureException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
