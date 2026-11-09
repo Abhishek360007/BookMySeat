@@ -999,6 +999,7 @@ async function renderRoute() {
 			if (adminShow) await admin.renderAdminShow(adminShow[1]);
 			else if (path === '/admin/new') await admin.renderNewShow();
 			else if (path === '/admin/check-in') await admin.renderCheckIn(new URLSearchParams(query));
+			else if (path === '/admin/promo-codes') await admin.renderPromoCodes();
 			else await admin.renderAdmin(new URLSearchParams(query));
 		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);

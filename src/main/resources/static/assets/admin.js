@@ -30,7 +30,8 @@ export async function renderAdmin(params) {
 	const page = Number(params.get('page') || 0);
 
 	app.innerHTML = `
-		<div class="row spread"><h1>Admin</h1><a class="btn btn-primary" href="#/admin/new">New show</a></div>
+		<div class="row spread"><h1>Admin</h1><div class="row"><a class="btn btn-ghost" href="#/admin/promo-codes">Promo codes</a>
+			<a class="btn btn-primary" href="#/admin/new">New show</a></div></div>
 		<div class="kpis" id="kpis"><p class="muted">Loading…</p></div>
 		<div class="row spread admin-filters">
 			<div class="tabs" role="tablist">
@@ -557,4 +558,145 @@ export async function renderCheckIn(params) {
 			scanner.innerHTML = `<p class="form-error">Camera unavailable: ${esc(e.message)}. Type the code instead.</p>`;
 		}
 	};
+}
+
+// ---------- #/admin/promo-codes ----------
+
+/** "20% off (at most ₹150)" or "₹50 off". */
+function discountText(c) {
+	if (c.kind === 'FLAT') return `${money.format(c.amount)} off`;
+	return `${Number(c.amount)}% off${c.maxDiscount ? ` (at most ${money.format(c.maxDiscount)})` : ''}`;
+}
+
+function limitsText(c) {
+	const parts = [];
+	if (c.minTotal) parts.push(`from ${money.format(c.minTotal)}`);
+	if (c.showTitle) parts.push(`only ${c.showTitle}`);
+	parts.push(c.maxUsesPerUser === 1 ? 'once per person' : `${c.maxUsesPerUser}× per person`);
+	return parts.join(' · ');
+}
+
+function validText(c) {
+	const until = c.validUntil ? `until ${when.format(new Date(c.validUntil))}` : 'no end';
+	return new Date(c.validFrom) > new Date() ? `from ${when.format(new Date(c.validFrom))}, ${until}` : until;
+}
+
+export async function renderPromoCodes() {
+	if (!requireAdmin()) return;
+	const shows = (await api('/api/admin/shows?when=UPCOMING&size=100&sort=startTime,asc', { auth: true })).content;
+
+	app.innerHTML = `
+		<a href="#/admin" class="small">← Admin</a>
+		<h1>Promo codes</h1>
+		<div id="promo-list"><p class="muted">Loading…</p></div>
+		<h2>New code</h2>
+		<form class="card admin-form" id="new-code" novalidate>
+			<div class="form-row">
+				<label>Code <input name="code" required maxlength="20" placeholder="e.g. DIWALI25" autocapitalize="characters" spellcheck="false"></label>
+				<label>Description <input name="description" maxlength="100" placeholder="optional, shown to customers"></label>
+			</div>
+			<div class="form-row">
+				<div class="field"><label for="code-kind">Discount</label>
+					<select name="kind" id="code-kind"><option value="PERCENT">Percentage</option><option value="FLAT">Fixed amount (₹)</option></select></div>
+				<label><span id="amount-label">Percent off</span> <input name="amount" type="number" min="0.01" step="0.01" required value="10"></label>
+			</div>
+			<div class="form-row">
+				<label id="cap-field">At most (₹) <input name="maxDiscount" type="number" min="0.01" step="0.01" placeholder="no cap"></label>
+				<label>Minimum total (₹) <input name="minTotal" type="number" min="0" step="0.01" placeholder="any total"></label>
+			</div>
+			<div class="field"><label for="code-show">Show</label>
+				<select name="showId" id="code-show"><option value="">Any show</option>${shows.map((s) => `<option value="${s.id}">${esc(s.title)} · ${esc(when.format(new Date(s.startTime)))}</option>`).join('')}</select></div>
+			<div class="form-row">
+				<label>Uses in total <input name="maxUses" type="number" min="1" step="1" placeholder="no limit"></label>
+				<label>Uses per person <input name="maxUsesPerUser" type="number" min="1" max="100" step="1" value="1"></label>
+			</div>
+			<label>Valid until (India time) <input name="validUntil" type="datetime-local"></label>
+			<p class="muted small" id="code-preview"></p>
+			<p class="form-error" id="new-code-error" role="alert" hidden></p>
+			<div class="row"><button class="btn btn-primary" id="create-code">Create code</button></div>
+		</form>`;
+
+	const form = document.getElementById('new-code');
+	const error = document.getElementById('new-code-error');
+	const preview = () => {
+		const percent = form.kind.value === 'PERCENT';
+		document.getElementById('amount-label').textContent = percent ? 'Percent off' : 'Rupees off';
+		document.getElementById('cap-field').hidden = !percent;
+		const c = { kind: form.kind.value, amount: form.amount.value || 0, maxDiscount: percent ? form.maxDiscount.value : null };
+		const example = 500;
+		let off = c.kind === 'PERCENT' ? Math.round(example * c.amount) / 100 : Number(c.amount);
+		if (c.maxDiscount) off = Math.min(off, Number(c.maxDiscount));
+		off = Math.max(Math.min(off, example - 1), 0);
+		document.getElementById('code-preview').textContent =
+			`${discountText(c)}: a ${money.format(example)} booking would cost ${money.format(example - off)}. A discount always leaves at least ₹1 to pay.`;
+	};
+	form.oninput = preview;
+	preview();
+
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		error.hidden = true;
+		const f = Object.fromEntries(new FormData(form));
+		const number = (v) => (v === '' || v == null ? null : Number(v));
+		const button = document.getElementById('create-code');
+		button.disabled = true;
+		try {
+			if (!f.code.trim()) throw new Error('Give the code a name, e.g. DIWALI25');
+			const created = await api('/api/admin/promo-codes', { method: 'POST', auth: true, body: {
+				code: f.code.trim(), description: f.description.trim() || null, kind: f.kind, amount: Number(f.amount),
+				maxDiscount: f.kind === 'PERCENT' ? number(f.maxDiscount) : null, minTotal: number(f.minTotal),
+				showId: number(f.showId), maxUses: number(f.maxUses), maxUsesPerUser: number(f.maxUsesPerUser) ?? 1,
+				validUntil: f.validUntil ? fromLocalInput(f.validUntil) : null,
+			} });
+			toast(`Created ${created.code}`);
+			form.reset();
+			preview();
+			await loadCodes();
+			document.querySelector(`#promo-list [data-code="${created.id}"]`)?.focus();
+		} catch (e) {
+			error.textContent = e.message;
+			error.hidden = false;
+		} finally {
+			button.disabled = false;
+		}
+	};
+
+	async function loadCodes() {
+		const page = await api('/api/admin/promo-codes?size=100', { auth: true });
+		const box = document.getElementById('promo-list');
+		if (!box) return;
+		if (page.content.length === 0) {
+			box.innerHTML = '<div class="card empty"><p class="muted">No promo codes yet. Create one below.</p></div>';
+			return;
+		}
+		box.innerHTML = `
+			<div class="card table-wrap" tabindex="0" role="region" aria-label="Promo codes"><table class="table">
+				<thead><tr><th>Code</th><th>Discount</th><th>Limits</th><th>Valid</th><th class="num">Used</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
+				<tbody>${page.content.map((c) => `<tr>
+					<td><strong tabindex="-1" data-code="${c.id}">${esc(c.code)}</strong>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}</td>
+					<td>${esc(discountText(c))}</td>
+					<td class="small">${esc(limitsText(c))}</td>
+					<td class="small">${esc(validText(c))}</td>
+					<td class="num">${c.uses}${c.maxUses ? ` / ${c.maxUses}` : ''}</td>
+					<td><span class="status ${c.active ? 'CONFIRMED' : 'CANCELLED'}">${c.active ? 'ACTIVE' : 'OFF'}</span></td>
+					<td><button class="btn btn-ghost btn-small" data-toggle="${c.id}" data-active="${c.active}"
+						aria-label="${c.active ? 'Switch off' : 'Switch on'} ${esc(c.code)}">${c.active ? 'Switch off' : 'Switch on'}</button></td>
+				</tr>`).join('')}</tbody></table></div>
+			<p class="muted small">Switching a code off stops new bookings using it; bookings made with it keep their discount.
+				A cancelled booking, or an order left unpaid, gives its use back.</p>`;
+		box.querySelectorAll('[data-toggle]').forEach((b) => {
+			b.onclick = async () => {
+				const action = b.dataset.active === 'true' ? 'disable' : 'enable';
+				try {
+					const updated = await api(`/api/admin/promo-codes/${b.dataset.toggle}/${action}`, { method: 'POST', auth: true });
+					toast(`${updated.code} is ${updated.active ? 'on' : 'off'}`);
+					await loadCodes();
+					box.querySelector(`[data-toggle="${updated.id}"]`)?.focus();
+				} catch (e) {
+					toast(e.message, 'error');
+				}
+			};
+		});
+	}
+	await loadCodes();
 }

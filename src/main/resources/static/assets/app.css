@@ -227,7 +227,7 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .admin-form label { display: grid; gap: .25rem; font-size: .9rem; }
 .admin-form .field { display: grid; gap: .25rem; font-size: .9rem; }
 .admin-form fieldset { border: 1px dashed var(--border); border-radius: 8px; display: grid; gap: .6rem; padding: 10px 12px; margin: 0; }
-.admin-form fieldset[hidden] { display: none; }
+.admin-form fieldset[hidden], .admin-form label[hidden] { display: none; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .75rem; width: 100%; }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
