@@ -15,15 +15,13 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * A booking as a calendar event: in the confirmation email, the reschedule email and as a download.
- * The uid is the booking's, so every version is the same event; the sequence is the minute it was made,
- * so a later file (a new show time) wins over an earlier one in a calendar that has both.
+ * A booking as a calendar event: in the confirmation email, the reschedule email and as a download. It lasts the
+ * film's runtime. The uid is the booking's, so every version is the same event; the sequence is the minute it was
+ * made, so a later file (a new show time) wins over an earlier one in a calendar that has both.
  */
 @Component
 public class BookingCalendar {
 
-	/** Shows have no stored length, so the event blocks a typical film or play. */
-	static final Duration EVENT_LENGTH = Duration.ofHours(3);
 	static final Duration REMINDER = Duration.ofHours(1);
 
 	private final TicketCodes ticketCodes;
@@ -51,7 +49,7 @@ public class BookingCalendar {
 				Ticket code: %s
 				My bookings: %s""".formatted(booking.getId(), seats, ticketCodes.codeFor(booking.getId()), bookingsUrl);
 		return CalendarEvents.ics(new CalendarEvents.Event("booking-" + booking.getId() + "@bookmyseat",
-				(int) (now.getEpochSecond() / 60), now, show.getStartTime(), EVENT_LENGTH, show.getTitle(),
+				(int) (now.getEpochSecond() / 60), now, show.getStartTime(), show.getFilm().runtime(), show.getTitle(),
 				location(show.getVenue()), description, bookingsUrl, REMINDER));
 	}
 

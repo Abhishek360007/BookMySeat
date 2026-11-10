@@ -94,8 +94,8 @@ public class SecurityConfig {
 				.requestMatchers("/actuator/**").hasRole("ADMIN")
 				.requestMatchers("/api/admin/**").hasRole("ADMIN")
 				// Your own review of a show: any logged-in user (before the admin-only rule for the rest of /api/shows)
-				.requestMatchers("/api/shows/*/reviews/me").authenticated()
-				.requestMatchers(HttpMethod.GET, "/api/venues/**", "/api/shows/**").permitAll()
+				.requestMatchers("/api/shows/*/reviews/me", "/api/films/*/reviews/me").authenticated()
+				.requestMatchers(HttpMethod.GET, "/api/venues/**", "/api/shows/**", "/api/films/**").permitAll()
 				.requestMatchers("/api/venues/**", "/api/shows/**").hasRole("ADMIN")
 				.anyRequest().authenticated())
 			.oauth2ResourceServer(oauth2 -> oauth2

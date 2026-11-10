@@ -34,7 +34,8 @@ public final class ShowSpecifications {
 	}
 
 	// A user typing "100%" should match the text "100%", not act as a wildcard
-	private static String escapeLike(String text) {
+	/** For LIKE with ESCAPE '\': the search text matches as typed, % and _ included. */
+	public static String escapeLike(String text) {
 		return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
 	}
 }

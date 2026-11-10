@@ -83,13 +83,13 @@ try {
 
 	// Before the show: told to wait
 	await tina.goto(`${BASE}/#/review/${show.id}`);
-	await tina.getByText('You can rate this show once it has started').waitFor();
+	await tina.getByText('You can rate this film once your screening has started').waitFor();
 	check(true, 'before the show, the review page says to wait until it has started');
 
 	const wait = new Date(show.startTime) - Date.now() + 2000;
 	if (wait > 0) await tina.waitForTimeout(wait);
 
-	// After the show: My bookings offers a rating instead of a cancel button
+	// After the start: My bookings offers a rating instead of a cancel button
 	await tina.goto(`${BASE}/#/bookings`);
 	await tina.getByRole('heading', { name: 'My bookings' }).waitFor();
 	check(await tina.getByRole('button', { name: 'Cancel' }).count() === 0, 'a show that has started has no Cancel button any more');
@@ -158,7 +158,7 @@ try {
 		'once hidden, the spam is gone from the list and the average is back to 4.0');
 
 	// Editing, then deleting
-	await tina.getByRole('link', { name: 'Rate this show' }).click();
+	await tina.getByRole('link', { name: 'Rate this film' }).click();
 	await tina.getByRole('heading', { name: `Your review of ${title}` }).waitFor();
 	check(await tina.locator('#star-4').isChecked(), 'the review page opens with the rating given');
 	await tina.locator('label[for="star-5"]').click();
@@ -176,7 +176,7 @@ try {
 	check(true, 'deleting the review leaves "No reviews yet." on the show\'s page');
 	await tina.goto(`${BASE}/#/bookings`);
 	await tina.getByRole('link', { name: `Rate ${title}` }).waitFor();
-	check(true, 'My bookings offers "Rate this show" again');
+	check(true, 'My bookings offers "Rate this film" again');
 
 	check(csp.length === 0, `no Content-Security-Policy violations (${csp.join(', ')})`);
 } catch (error) {

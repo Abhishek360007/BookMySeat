@@ -7,7 +7,10 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
-/** One person's rating (1 to 5) and optional text for a show they went to. One per person per show. */
+/**
+ * One person's rating (1 to 5) and optional text for a film they went to. One per person per film; show is the
+ * screening they went to (the latest one they reviewed after).
+ */
 @Entity
 @Table(name = "reviews")
 @Getter
@@ -17,6 +20,10 @@ public class Review {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
+
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "film_id")
+	private Film film;
 
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "show_id")
@@ -46,6 +53,7 @@ public class Review {
 	private Instant updatedAt;
 
 	public Review(Show show, User user, int rating, String body, Instant now) {
+		this.film = show.getFilm();
 		this.show = show;
 		this.user = user;
 		this.rating = rating;
@@ -54,7 +62,8 @@ public class Review {
 		this.updatedAt = now;
 	}
 
-	public void edit(int rating, String body, Instant now) {
+	public void edit(Show show, int rating, String body, Instant now) {
+		this.show = show;
 		this.rating = rating;
 		this.body = body;
 		this.updatedAt = now;

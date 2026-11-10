@@ -193,6 +193,13 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .ticket .seats { font-size: 1.1rem; }
 .ticket code { word-break: break-all; }
 
+/* Films */
+.synopsis { max-width: 70ch; white-space: pre-line; }
+h3.day { font-size: 1rem; margin: 1rem 0 .4rem; }
+.slots { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.slot { display: grid; gap: 2px; padding: 10px 14px; text-decoration: none; color: inherit; min-width: 9rem; }
+.slot:hover { border-color: var(--accent); }
+
 /* Reviews */
 .rating { font-size: .9rem; }
 .rating .star, .stars-read { color: var(--star); }

@@ -16,10 +16,10 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * "How was it?": once a show is over (afterStart after it began; shows store no length, like the calendar event),
- * each confirmed booking is looked at once. Its customer is emailed unless they already reviewed the show or were
- * already asked through another booking for it. Shows older than the window are left alone, so a sleeping app or
- * a first deploy never emails about something long past.
+ * "How was it?": afterEnd after a show is over (its start plus the film's runtime), each confirmed booking is looked
+ * at once. Its customer is emailed unless they already reviewed the film or were already asked about it through
+ * another booking (of this or another screening). Shows that started before the window are left alone, so a
+ * sleeping app or a first deploy never emails about something long past.
  */
 @Slf4j
 @Service
@@ -32,21 +32,21 @@ public class ReviewRequests {
 	private final ReviewRepository reviewRepository;
 	private final ApplicationEventPublisher events;
 	private final Clock clock;
-	private final Duration afterStart;
+	private final Duration afterEnd;
 	private final Duration window;
 	private final ReviewRequests self;
 
 	// self: calls through the Spring proxy, so each booking is handled in its own transaction
 	public ReviewRequests(BookingRepository bookingRepository, ReviewRepository reviewRepository,
 			ApplicationEventPublisher events, Clock clock,
-			@Value("${reviews.request.after-start}") Duration afterStart,
+			@Value("${reviews.request.after-end}") Duration afterEnd,
 			@Value("${reviews.request.window}") Duration window,
 			@Lazy ReviewRequests self) {
 		this.bookingRepository = bookingRepository;
 		this.reviewRepository = reviewRepository;
 		this.events = events;
 		this.clock = clock;
-		this.afterStart = afterStart;
+		this.afterEnd = afterEnd;
 		this.window = window;
 		this.self = self;
 	}
@@ -56,7 +56,7 @@ public class ReviewRequests {
 		Instant now = Instant.now(clock);
 		int emailed = 0;
 		for (int round = 0; round < MAX_BATCHES; round++) {
-			var due = bookingRepository.findDueForReviewRequest(now.minus(afterStart), now.minus(window), BATCH);
+			var due = bookingRepository.findDueForReviewRequest(now.minus(afterEnd), now.minus(window), BATCH);
 			for (Long id : due) {
 				try {
 					if (self.handle(id)) {
@@ -82,10 +82,10 @@ public class ReviewRequests {
 			return false; // handled meanwhile, or being handled by someone else right now
 		}
 		Long userId = booking.getUser().getId();
-		Long showId = booking.getShow().getId();
-		boolean alreadyAsked = bookingRepository.existsByUserIdAndShowIdAndReviewRequestedAtIsNotNull(userId, showId);
+		Long filmId = booking.getShow().getFilm().getId();
+		boolean alreadyAsked = bookingRepository.wasAskedAboutFilm(userId, filmId);
 		booking.reviewRequested(Instant.now(clock));
-		if (alreadyAsked || reviewRepository.existsByShowIdAndUserId(showId, userId)) {
+		if (alreadyAsked || reviewRepository.existsByFilmIdAndUserId(filmId, userId)) {
 			return false;
 		}
 		events.publishEvent(new ReviewRequestedEvent(bookingId)); // the email is queued in this transaction

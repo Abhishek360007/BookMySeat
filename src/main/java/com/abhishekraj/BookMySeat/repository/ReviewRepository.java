@@ -14,28 +14,28 @@ import java.util.Optional;
 
 public interface ReviewRepository extends JpaRepository<Review, Long> {
 
-	// A show's page: visible reviews with their author (a to-one, so paging stays in the database)
+	// A film's page: visible reviews with their author (a to-one, so paging stays in the database)
 	@EntityGraph(attributePaths = "user")
-	Page<Review> findByShowIdAndHiddenFalse(Long showId, Pageable pageable);
+	Page<Review> findByFilmIdAndHiddenFalse(Long filmId, Pageable pageable);
 
-	// FOR UPDATE: an edit, a delete and an admin hiding the same review take turns, so the show's sum stays right
+	// FOR UPDATE: an edit, a delete and an admin hiding the same review take turns, so the film's sum stays right
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@Query("select r from Review r where r.show.id = :showId and r.user.id = :userId")
-	Optional<Review> lockByShowIdAndUserId(Long showId, Long userId);
+	@Query("select r from Review r where r.film.id = :filmId and r.user.id = :userId")
+	Optional<Review> lockByFilmIdAndUserId(Long filmId, Long userId);
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select r from Review r where r.id = :id")
 	Optional<Review> lockById(Long id);
 
-	@EntityGraph(attributePaths = "show")
+	@EntityGraph(attributePaths = {"film", "show"})
 	List<Review> findByUserIdOrderByCreatedAtDesc(Long userId);
 
-	@EntityGraph(attributePaths = {"show", "user"})
+	@EntityGraph(attributePaths = {"film", "user"})
 	Page<Review> findByHidden(boolean hidden, Pageable pageable);
 
 	@Override
-	@EntityGraph(attributePaths = {"show", "user"})
+	@EntityGraph(attributePaths = {"film", "user"})
 	Page<Review> findAll(Pageable pageable);
 
-	boolean existsByShowIdAndUserId(Long showId, Long userId);
+	boolean existsByFilmIdAndUserId(Long filmId, Long userId);
 }

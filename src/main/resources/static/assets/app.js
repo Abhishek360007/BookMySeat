@@ -35,6 +35,18 @@ function ratingSummary(show) {
 	return `<span class="rating"><span class="star" aria-hidden="true">★</span> <span aria-hidden="true">${esc(average)}</span><span class="sr-only">Rated ${esc(average)} out of 5,</span> · ${show.ratingCount} review${show.ratingCount > 1 ? 's' : ''}</span>`;
 }
 
+/** 116 → "1 h 56 min". */
+function runtimeText(minutes) {
+	const h = Math.floor(minutes / 60);
+	const m = minutes % 60;
+	return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
+}
+
+/** "2 h 46 min · English · UA": what is known about a film, in one line. */
+function filmFacts(film) {
+	return [runtimeText(film.runtimeMinutes), film.language, film.certificate].filter(Boolean).map(esc).join(' · ');
+}
+
 function priceLabel(show) {
 	const prices = Object.values(show.prices ?? {}).map(Number);
 	const lowest = prices.length ? Math.min(...prices) : Number(show.price);
@@ -252,11 +264,11 @@ async function renderHome(params) {
 	app.innerHTML = `
 		<h1>Now booking</h1>
 		<form class="search" id="search">
-			<input name="q" placeholder="Search movies" value="${esc(q)}" aria-label="Search movies">
+			<input name="q" placeholder="Search films" value="${esc(q)}" aria-label="Search films">
 			<input name="city" placeholder="City" value="${esc(city)}" aria-label="City">
 			<button class="btn btn-primary">Search</button>
 		</form>
-		<div id="results"><p class="muted">Loading shows…</p></div>`;
+		<div id="results"><p class="muted">Loading films…</p></div>`;
 
 	document.getElementById('search').onsubmit = (event) => {
 		event.preventDefault();
@@ -268,20 +280,22 @@ async function renderHome(params) {
 	const query = new URLSearchParams({ size: '12', page: String(page) });
 	if (q) query.set('q', q);
 	if (city) query.set('city', city);
-	const results = await api(`/api/shows/search?${query}`);
+	const results = await api(`/api/films?${query}`);
 	const box = document.getElementById('results');
 	if (results.content.length === 0) {
-		box.innerHTML = `<div class="card empty"><p>No upcoming shows match.</p></div>`;
+		box.innerHTML = `<div class="card empty"><p>No films showing match.</p></div>`;
 		return;
 	}
+	// The link's name is the film's title; the rest of the card is read after it
 	box.innerHTML = `
 		<div class="shows">
-			${results.content.map((show) => `
-				<a class="card show-card" href="#/show/${show.id}">
-					<span class="title">${esc(show.title)}</span>
-					<span class="muted">${esc(show.venueName)}</span>
-					<span>${esc(when.format(new Date(show.startTime)))}</span>
-					<span class="price">${esc(priceLabel(show))}</span>
+			${results.content.map((film) => `
+				<a class="card show-card" href="#/film/${film.id}${city ? `?city=${encodeURIComponent(city)}` : ''}">
+					<span class="title">${esc(film.title)}</span>
+					<span class="muted small">${filmFacts(film)}</span>
+					${ratingSummary(film)}
+					<span>Next: ${esc(when.format(new Date(film.nextShows[0].startTime)))} · ${esc(film.nextShows[0].venueName)}</span>
+					<span class="price">${film.upcomingShows} showtime${film.upcomingShows > 1 ? 's' : ''} · from ${esc(money.format(film.fromPrice))}</span>
 				</a>`).join('')}
 		</div>
 		<div class="row spread pager">
@@ -292,6 +306,42 @@ async function renderHome(params) {
 	const go = (p) => { const next = new URLSearchParams(params); next.set('page', p); location.hash = `#/?${next}`; };
 	document.getElementById('prev').onclick = () => go(page - 1);
 	document.getElementById('next').onclick = () => go(page + 1);
+}
+
+/** #/film/<id>: a film, its showtimes by day (in a city, if the search had one) and its reviews. */
+async function renderFilm(filmId, params) {
+	const film = await api(`/api/films/${filmId}`);
+	const city = params.get('city') || '';
+	const shows = film.shows.filter((s) => !city || s.city.toLowerCase() === city.toLowerCase());
+	const dayOf = (s) => day.format(new Date(s.startTime));
+	const days = [...new Set(shows.map(dayOf))];
+	const time = new Intl.DateTimeFormat('en-IN', { timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+	const wentToIt = state.user
+		? (await api('/api/bookings/me', { auth: true }).catch(() => []))
+			.some((b) => b.filmId === film.id && b.status === 'CONFIRMED' && new Date(b.showStartTime) <= new Date())
+		: false;
+	app.innerHTML = `
+		<a href="#/${city ? `?city=${encodeURIComponent(city)}` : ''}" class="small">← All films</a>
+		<h1>${esc(film.title)}</h1>
+		<p class="muted">${filmFacts(film)}</p>
+		${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
+		${film.synopsis ? `<p class="synopsis">${esc(film.synopsis)}</p>` : ''}
+		<section aria-labelledby="showtimes-h">
+			<h2 id="showtimes-h">Showtimes${city ? ` in ${esc(city)}` : ''}</h2>
+			${shows.length === 0 ? `<p class="muted">No showtimes coming up${city ? ` in ${esc(city)}. <a href="#/film/${film.id}">See every city</a>` : '.'}</p>` : days.map((d) => `
+				<h3 class="day">${esc(d)}</h3>
+				<ul class="slots">${shows.filter((s) => dayOf(s) === d).map((s) => `
+					<li><a class="card slot" href="#/show/${s.showId}">
+						<strong>${esc(time.format(new Date(s.startTime)))}</strong>
+						<span class="small">${esc(s.venueName)}, ${esc(s.city)}</span>
+						<span class="small muted">from ${esc(money.format(s.fromPrice))}</span></a></li>`).join('')}</ul>`).join('')}
+		</section>
+		<section class="reviews" aria-labelledby="reviews-h">
+			<div class="row spread"><h2 id="reviews-h">Reviews</h2>
+				${wentToIt ? `<a class="btn btn-ghost" href="#/film/${film.id}/review">Rate this film</a>` : ''}</div>
+			<div id="reviews"><p class="muted">Loading reviews…</p></div>
+		</section>`;
+	renderFilmReviews(film.id, wentToIt);
 }
 
 async function renderShow(showId) {
@@ -337,8 +387,8 @@ async function renderShow(showId) {
 	app.innerHTML = `
 		<a href="#/" class="small">← All shows</a>
 		<h1>${esc(show.title)}</h1>
-		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · <span id="seat-prices"></span></p>
-		${show.ratingCount ? `<p>${ratingSummary(show)}</p>` : ''}
+		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(runtimeText(show.runtimeMinutes))} · <span id="seat-prices"></span></p>
+		<p>${show.ratingCount ? `${ratingSummary(show)} · ` : ''}<a href="#/film/${esc(show.filmId)}">About the film and other showtimes</a></p>
 		<div class="card">
 			<div class="screen">SCREEN</div>
 			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
@@ -353,10 +403,10 @@ async function renderShow(showId) {
 		${testModeNote()}
 		<section class="reviews" aria-labelledby="reviews-h">
 			<div class="row spread"><h2 id="reviews-h">Reviews</h2>
-				${new Date(show.startTime) <= new Date() ? `<a class="btn btn-ghost" href="#/review/${esc(show.id)}">Rate this show</a>` : ''}</div>
+				${new Date(show.startTime) <= new Date() ? `<a class="btn btn-ghost" href="#/film/${esc(show.filmId)}/review">Rate this film</a>` : ''}</div>
 			<div id="reviews"><p class="muted">Loading reviews…</p></div>
 		</section>`;
-	renderShowReviews(show);
+	renderFilmReviews(show.filmId, new Date(show.startTime) <= new Date());
 
 	const rows = () => {
 		const byRow = new Map();
@@ -808,13 +858,13 @@ async function renderBookings() {
 		api('/api/waitlist/me', { auth: true }).catch(() => []),
 		api('/api/reviews/me', { auth: true }).catch(() => []),
 	]);
-	const reviewOf = new Map(reviews.map((r) => [r.showId, r]));
+	const reviewOf = new Map(reviews.map((r) => [r.filmId, r]));
 	// After the show: no cancelling any more, but a rating (or the one you gave, to change)
 	const afterShow = (b) => {
-		const mine = reviewOf.get(b.showId);
+		const mine = reviewOf.get(b.filmId);
 		return mine
-			? `<a class="btn btn-ghost" href="#/review/${esc(b.showId)}" aria-label="Your rating of ${esc(b.showTitle)}: ${mine.rating} out of 5. Edit it"><span aria-hidden="true">${starsText(mine.rating)} · Edit</span></a>`
-			: `<a class="btn btn-primary" href="#/review/${esc(b.showId)}" aria-label="Rate ${esc(b.showTitle)}">Rate this show</a>`;
+			? `<a class="btn btn-ghost" href="#/film/${esc(b.filmId)}/review" aria-label="Your rating of ${esc(b.showTitle)}: ${mine.rating} out of 5. Edit it"><span aria-hidden="true">${starsText(mine.rating)} · Edit</span></a>`
+			: `<a class="btn btn-primary" href="#/film/${esc(b.filmId)}/review" aria-label="Rate ${esc(b.showTitle)}">Rate this film</a>`;
 	};
 	const waitlistHtml = waitlist.length === 0 ? '' : `
 		<h2>Waitlist</h2>
@@ -888,8 +938,8 @@ function bindLeave() {
 	});
 }
 
-/** The show page's reviews: newest or highest rated first, 10 at a time with "Show more". */
-function renderShowReviews(show) {
+/** A film's reviews (on its page and its screenings'): newest or highest rated first, 10 at a time. */
+function renderFilmReviews(filmId, started) {
 	const box = document.getElementById('reviews');
 	let sort = 'newest';
 	let page = 0;
@@ -904,14 +954,14 @@ function renderShowReviews(show) {
 	const load = async (more) => {
 		let result;
 		try {
-			result = await api(`/api/shows/${show.id}/reviews?sort=${sort}&page=${page}&size=10`);
+			result = await api(`/api/films/${filmId}/reviews?sort=${sort}&page=${page}&size=10`);
 		} catch (e) {
 			box.innerHTML = `<p class="muted">Reviews could not be loaded: ${esc(e.message)}</p>`;
 			return;
 		}
 		if (!more) {
 			if (result.totalElements === 0) {
-				box.innerHTML = `<p class="muted">No reviews yet.${new Date(show.startTime) <= new Date() ? ' Been to it? Be the first to rate it.' : ' People who go can rate it after the show.'}</p>`;
+				box.innerHTML = `<p class="muted">No reviews yet.${started ? ' Been to it? Be the first to rate it.' : ' People who go can rate it once their screening has started.'}</p>`;
 				return;
 			}
 			box.innerHTML = `
@@ -938,41 +988,48 @@ function renderShowReviews(show) {
 	load(false);
 }
 
-/** #/review/<showId>: rate a show you went to (1 to 5 stars and an optional text), or change or delete your review. */
-async function renderReview(showId) {
+/** #/review/<showId> (links before films existed): the review page of that screening's film. */
+async function redirectToFilmReview(showId) {
+	const show = await api(`/api/shows/${showId}`);
+	location.replace(`#/film/${show.filmId}/review`);
+}
+
+/** #/film/<filmId>/review: rate a film you went to (1 to 5 stars and an optional text), or change or delete your review. */
+async function renderReview(filmId) {
 	if (!(await requireLogin())) {
-		location.hash = `#/show/${showId}`;
+		location.hash = `#/film/${filmId}`;
 		return;
 	}
-	const [show, bookings, reviews] = await Promise.all([
-		api(`/api/shows/${showId}`),
+	const [film, bookings, reviews] = await Promise.all([
+		api(`/api/films/${filmId}`),
 		api('/api/bookings/me', { auth: true }),
 		api('/api/reviews/me', { auth: true }),
 	]);
-	const back = `<a href="#/show/${esc(show.id)}" class="small">← ${esc(show.title)}</a>`;
-	const booked = bookings.some((b) => b.showId === show.id && b.status === 'CONFIRMED');
-	if (!booked) {
-		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(show.title)}</h1>
-			<p class="muted">Only people with a booking for this show can review it.</p><a class="btn btn-primary" href="#/show/${esc(show.id)}">See the show</a></div>`;
+	const back = `<a href="#/film/${esc(film.id)}" class="small">← ${esc(film.title)}</a>`;
+	const booked = bookings.filter((b) => b.filmId === film.id && b.status === 'CONFIRMED');
+	if (booked.length === 0) {
+		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(film.title)}</h1>
+			<p class="muted">Only people with a booking for this film can review it.</p><a class="btn btn-primary" href="#/film/${esc(film.id)}">See the film</a></div>`;
 		return;
 	}
-	if (new Date(show.startTime) > new Date()) {
-		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(show.title)}</h1>
-			<p class="muted">You can rate this show once it has started, from ${esc(when.format(new Date(show.startTime)))}.</p>
+	const first = booked.map((b) => new Date(b.showStartTime)).sort((a, b) => a - b)[0];
+	if (first > new Date()) {
+		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(film.title)}</h1>
+			<p class="muted">You can rate this film once your screening has started, from ${esc(when.format(first))}.</p>
 			<a class="btn btn-primary" href="#/bookings">My bookings</a></div>`;
 		return;
 	}
-	let mine = reviews.find((r) => r.showId === show.id) ?? null;
+	let mine = reviews.find((r) => r.filmId === film.id) ?? null;
 	app.innerHTML = `
 		${back}
-		<h1 id="review-heading">${mine ? 'Your review of' : 'Rate'} ${esc(show.title)}</h1>
-		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))}</p>
+		<h1 id="review-heading">${mine ? 'Your review of' : 'Rate'} ${esc(film.title)}</h1>
+		<p class="muted">${filmFacts(film)}</p>
 		<form class="card review-form" id="review-form" novalidate>
 			<fieldset class="star-input">
 				<legend>Your rating</legend>
 				<div class="row">${[1, 2, 3, 4, 5].map((n) => `
 					<input type="radio" name="rating" id="star-${n}" value="${n}">
-					<label for="star-${n}"><span aria-hidden="true">★</span><span class="sr-only">${n} star${n > 1 ? 's' : ''}, ${RATING_WORDS[n].toLowerCase()}</span></label>`).join('')}
+					<label for="star-${n}"><span aria-hidden="true">☆</span><span class="sr-only">${n} star${n > 1 ? 's' : ''}, ${RATING_WORDS[n].toLowerCase()}</span></label>`).join('')}
 					<span class="muted" id="rating-words" aria-hidden="true"></span></div>
 			</fieldset>
 			<label class="field" for="review-text">Your review <span class="muted">(optional)</span></label>
@@ -1003,7 +1060,7 @@ async function renderReview(showId) {
 			form.querySelector(`#star-${mine.rating}`).checked = true;
 			text.value = mine.text ?? '';
 		}
-		document.getElementById('review-heading').textContent = `${mine ? 'Your review of' : 'Rate'} ${show.title}`;
+		document.getElementById('review-heading').textContent = `${mine ? 'Your review of' : 'Rate'} ${film.title}`;
 		document.getElementById('review-save').textContent = mine ? 'Save changes' : 'Post review';
 		document.getElementById('review-delete').hidden = !mine;
 		document.getElementById('review-hidden').hidden = !mine?.hidden;
@@ -1026,10 +1083,10 @@ async function renderReview(showId) {
 		const save = document.getElementById('review-save');
 		save.disabled = true;
 		try {
-			const first = !mine;
-			mine = await api(`/api/shows/${show.id}/reviews/me`, { method: 'PUT', auth: true, body: { rating, text: text.value } });
+			const firstReview = !mine;
+			mine = await api(`/api/films/${film.id}/reviews/me`, { method: 'PUT', auth: true, body: { rating, text: text.value } });
 			fill();
-			toast(first ? 'Thanks! Your review is up.' : 'Your review is updated.');
+			toast(firstReview ? 'Thanks! Your review is up.' : 'Your review is updated.');
 		} catch (e) {
 			error.textContent = e.message;
 			error.hidden = false;
@@ -1038,11 +1095,11 @@ async function renderReview(showId) {
 		}
 	};
 	document.getElementById('review-delete').onclick = async () => {
-		if (!confirm('Delete your review of this show?')) return;
+		if (!confirm('Delete your review of this film?')) return;
 		try {
-			await api(`/api/shows/${show.id}/reviews/me`, { method: 'DELETE', auth: true });
+			await api(`/api/films/${film.id}/reviews/me`, { method: 'DELETE', auth: true });
 			toast('Your review is deleted.');
-			location.hash = `#/show/${show.id}`;
+			location.hash = `#/film/${film.id}`;
 		} catch (e) {
 			toast(e.message, 'error');
 		}
@@ -1267,6 +1324,8 @@ async function renderRoute() {
 		const reset = path.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
 		const adminShow = path.match(/^\/admin\/show\/(\d+)$/);
 		const review = path.match(/^\/review\/(\d+)$/);
+		const film = path.match(/^\/film\/(\d+)$/);
+		const filmReview = path.match(/^\/film\/(\d+)\/review$/);
 		if (path === '/admin' || path.startsWith('/admin/')) {
 			// Loaded only when an admin page is opened, so customers never download it
 			const admin = await import('./admin.js');
@@ -1275,6 +1334,7 @@ async function renderRoute() {
 			else if (path === '/admin/check-in') await admin.renderCheckIn(new URLSearchParams(query));
 			else if (path === '/admin/promo-codes') await admin.renderPromoCodes();
 			else if (path === '/admin/reviews') await admin.renderReviews(new URLSearchParams(query));
+			else if (path === '/admin/films') await admin.renderFilms();
 			else await admin.renderAdmin(new URLSearchParams(query));
 		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);
@@ -1282,7 +1342,9 @@ async function renderRoute() {
 		else if (path === '/bookings') await renderBookings();
 		else if (path === '/account') await renderAccount();
 		else if (ticket) await renderTicket(ticket[1]);
-		else if (review) await renderReview(review[1]);
+		else if (review) await redirectToFilmReview(review[1]);
+		else if (film) await renderFilm(film[1], new URLSearchParams(query));
+		else if (filmReview) await renderReview(filmReview[1]);
 		else if (path === '/forgot') renderForgot();
 		else if (reset) renderReset(reset[1]);
 		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
@@ -1343,4 +1405,4 @@ async function start() {
 start();
 
 // Shared with the admin pages (assets/admin.js)
-export { api, app, esc, money, when, toast, state, every, ApiError, starsText, day };
+export { api, app, esc, money, when, toast, state, every, ApiError, starsText, day, runtimeText };

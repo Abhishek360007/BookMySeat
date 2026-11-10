@@ -24,38 +24,62 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-@Tag(name = "Reviews", description = "Ratings and reviews of shows, by the people who went to them.")
+@Tag(name = "Reviews", description = "Ratings and reviews of films, by the people who went to one of their screenings. "
+		+ "The /api/shows/{showId}/... endpoints do the same for the film of that screening.")
 @RestController
 @RequiredArgsConstructor
 public class ReviewController {
 
 	private final ReviewService reviewService;
 
-	@Operation(summary = "A show's reviews", description = "Visible reviews, sort=newest (default) or highest; "
-			+ "the average and count are on the show itself (ratingAverage, ratingCount).")
-	@GetMapping("/api/shows/{showId}/reviews")
-	public PageResponse<ReviewResponse> list(@PathVariable Long showId,
+	@Operation(summary = "A film's reviews", description = "Visible reviews, sort=newest (default) or highest; "
+			+ "the average and count are on the film (ratingAverage, ratingCount).")
+	@GetMapping("/api/films/{filmId}/reviews")
+	public PageResponse<ReviewResponse> list(@PathVariable Long filmId,
 			@RequestParam(defaultValue = "newest") String sort,
 			@RequestParam(defaultValue = "0") int page,
 			@RequestParam(defaultValue = "10") int size) {
-		return reviewService.list(showId, sort, page, size);
+		return reviewService.list(filmId, sort, page, size);
 	}
 
-	@Operation(summary = "Write or edit your review", description = "Needs a confirmed booking for a show that has "
-			+ "started (409 with reason NO_BOOKING or NOT_STARTED otherwise). 201 for your first review of the show, "
-			+ "200 for an edit. One per person per show.")
-	@PutMapping("/api/shows/{showId}/reviews/me")
-	public ResponseEntity<MyReviewResponse> save(@AuthenticationPrincipal Jwt jwt, @PathVariable Long showId,
+	@Operation(summary = "Write or edit your review of a film", description = "Needs a confirmed booking for one of "
+			+ "its screenings that has started (409 with reason NO_BOOKING or NOT_STARTED otherwise). 201 for your "
+			+ "first review of the film, 200 for an edit. One per person per film.")
+	@PutMapping("/api/films/{filmId}/reviews/me")
+	public ResponseEntity<MyReviewResponse> save(@AuthenticationPrincipal Jwt jwt, @PathVariable Long filmId,
 			@Valid @RequestBody ReviewRequest request) {
-		ReviewService.Saved saved = reviewService.save(Long.parseLong(jwt.getSubject()), showId, request);
+		ReviewService.Saved saved = reviewService.save(Long.parseLong(jwt.getSubject()), filmId, request);
 		return ResponseEntity.status(saved.created() ? HttpStatus.CREATED : HttpStatus.OK).body(saved.review());
 	}
 
-	@Operation(summary = "Delete your review")
+	@Operation(summary = "Delete your review of a film")
+	@DeleteMapping("/api/films/{filmId}/reviews/me")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long filmId) {
+		reviewService.delete(Long.parseLong(jwt.getSubject()), filmId);
+	}
+
+	@Operation(summary = "The reviews of a screening's film")
+	@GetMapping("/api/shows/{showId}/reviews")
+	public PageResponse<ReviewResponse> listForShow(@PathVariable Long showId,
+			@RequestParam(defaultValue = "newest") String sort,
+			@RequestParam(defaultValue = "0") int page,
+			@RequestParam(defaultValue = "10") int size) {
+		return reviewService.list(reviewService.filmOfShow(showId), sort, page, size);
+	}
+
+	@Operation(summary = "Write or edit your review of a screening's film")
+	@PutMapping("/api/shows/{showId}/reviews/me")
+	public ResponseEntity<MyReviewResponse> saveForShow(@AuthenticationPrincipal Jwt jwt, @PathVariable Long showId,
+			@Valid @RequestBody ReviewRequest request) {
+		return save(jwt, reviewService.filmOfShow(showId), request);
+	}
+
+	@Operation(summary = "Delete your review of a screening's film")
 	@DeleteMapping("/api/shows/{showId}/reviews/me")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
-	public void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable Long showId) {
-		reviewService.delete(Long.parseLong(jwt.getSubject()), showId);
+	public void deleteForShow(@AuthenticationPrincipal Jwt jwt, @PathVariable Long showId) {
+		delete(jwt, reviewService.filmOfShow(showId));
 	}
 
 	@Operation(summary = "Your reviews", description = "Newest first, including any an admin hid.")

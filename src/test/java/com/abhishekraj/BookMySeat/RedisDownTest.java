@@ -12,6 +12,7 @@ import com.abhishekraj.BookMySeat.entity.WaitlistEntry;
 import com.abhishekraj.BookMySeat.entity.WaitlistStatus;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
+import com.abhishekraj.BookMySeat.repository.FilmRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
@@ -65,6 +66,7 @@ class RedisDownTest {
 
 	@Autowired MockMvc mvc;
 	@Autowired ShowRepository showRepository;
+	@Autowired FilmRepository filmRepository;
 	@Autowired VenueRepository venueRepository;
 	@Autowired SeatRepository seatRepository;
 	@Autowired UserRepository userRepository;
@@ -80,6 +82,7 @@ class RedisDownTest {
 		venue = venueRepository.save(venue);
 		Show show = new Show();
 		show.setTitle("Still Works");
+		show.setFilm(TestFilms.named(filmRepository, "Still Works"));
 		show.setVenue(venue);
 		show.setStartTime(Instant.now().plus(1, ChronoUnit.DAYS));
 		show.setPrice(new BigDecimal("250.00"));
@@ -101,6 +104,7 @@ class RedisDownTest {
 		venue = venueRepository.save(venue);
 		Show show = new Show();
 		show.setTitle("Sold Out Offline");
+		show.setFilm(TestFilms.named(filmRepository, "Sold Out Offline"));
 		show.setVenue(venue);
 		show.setStartTime(Instant.now().plus(1, ChronoUnit.DAYS));
 		show.setPrice(new BigDecimal("250.00"));

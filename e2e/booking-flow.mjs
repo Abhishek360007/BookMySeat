@@ -34,7 +34,11 @@ try {
 	check(await page.getByRole('heading', { name: 'Now booking' }).isVisible(), 'home page lists upcoming shows');
 	await page.screenshot({ path: `${OUT}/01-home.png` });
 
+	// Home lists films: the film's page has its showtimes
 	await page.getByText(SHOW).first().click();
+	await page.getByRole('heading', { name: 'Showtimes' }).waitFor();
+	check(true, 'the film page lists its showtimes');
+	await page.locator('.slot').first().click();
 	await page.locator('.seat').first().waitFor();
 	check((await page.locator('.seat').count()) === 50, 'seat map shows all 50 seats');
 	await page.getByRole('button', { name: 'Seat C5, available' }).click();

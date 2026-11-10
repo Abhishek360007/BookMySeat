@@ -12,6 +12,7 @@ import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.exception.ReviewRefusedException;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
+import com.abhishekraj.BookMySeat.repository.FilmRepository;
 import com.abhishekraj.BookMySeat.repository.ReviewRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.UserRepository;
@@ -30,13 +31,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Reviews of shows by the people who went. Each show keeps the sum and count of its visible ratings, changed in the
- * same transaction as the review with an atomic "+ delta" UPDATE, so its average is always the one of its reviews.
- * Everything that changes one review takes its row lock (or, for a first review, the person's bookings' locks).
+ * Reviews of films by the people who went to one of their screenings: one per person per film. Each film keeps the
+ * sum and count of its visible ratings, changed in the same transaction as the review with an atomic "+ delta"
+ * UPDATE, so its average is always the one of its reviews. Everything that changes one review takes its row lock
+ * (or, for a first review, the locks of the person's bookings for the film).
  */
 @Slf4j
 @Service
@@ -49,62 +52,72 @@ public class ReviewService {
 	public record Saved(MyReviewResponse review, boolean created) {}
 
 	private final ReviewRepository reviewRepository;
+	private final FilmRepository filmRepository;
 	private final ShowRepository showRepository;
 	private final BookingRepository bookingRepository;
 	private final UserRepository userRepository;
 	private final CacheManager cacheManager;
 	private final Clock clock;
 
-	/** Creates the person's review of the show, or edits it if they already wrote one. */
+	/** The film a screening belongs to: the show endpoints review and list the film. */
+	@Transactional(readOnly = true)
+	public Long filmOfShow(Long showId) {
+		return showRepository.findById(showId).map(show -> show.getFilm().getId())
+				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + showId));
+	}
+
+	/** Creates the person's review of the film, or edits it if they already wrote one. */
 	@Transactional
-	public Saved save(Long userId, Long showId, ReviewRequest request) {
-		Show show = findShow(showId);
-		// Locks their bookings for this show: a second save at the same moment waits here, then edits this one
-		List<Booking> bookings = bookingRepository.lockConfirmed(userId, showId);
-		ReviewRules.refusal(!bookings.isEmpty(), show.getStartTime(), Instant.now(clock)).ifPresent(refusal -> {
+	public Saved save(Long userId, Long filmId, ReviewRequest request) {
+		requireFilm(filmId);
+		// Locks their bookings for the film: a second save at the same moment waits here, then edits this one
+		List<Booking> bookings = bookingRepository.lockConfirmedForFilm(userId, filmId);
+		Instant now = Instant.now(clock);
+		// The screening that lets them review: the latest one that has started, else the first one booked
+		Show went = bookings.stream().map(Booking::getShow).filter(show -> !now.isBefore(show.getStartTime()))
+				.max(Comparator.comparing(Show::getStartTime))
+				.orElseGet(() -> bookings.stream().map(Booking::getShow).min(Comparator.comparing(Show::getStartTime)).orElse(null));
+		ReviewRules.refusal(went != null, went == null ? now : went.getStartTime(), now).ifPresent(refusal -> {
 			throw new ReviewRefusedException(refusal, switch (refusal) {
-				case NO_BOOKING -> "Only people with a booking for this show can review it";
-				case NOT_STARTED -> "You can review this show once it has started";
+				case NO_BOOKING -> "Only people with a booking for this film can review it";
+				case NOT_STARTED -> "You can review this film once your screening has started";
 			});
 		});
 		int rating = request.rating();
 		String text = ReviewRules.text(request.text());
-		Instant now = Instant.now(clock);
 
-		Review existing = reviewRepository.lockByShowIdAndUserId(showId, userId).orElse(null);
+		Review existing = reviewRepository.lockByFilmIdAndUserId(filmId, userId).orElse(null);
 		Review review;
 		if (existing == null) {
-			review = reviewRepository.save(new Review(show, userRepository.getReferenceById(userId), rating, text, now));
-			showRepository.adjustRating(showId, rating, 1);
+			review = reviewRepository.save(new Review(went, userRepository.getReferenceById(userId), rating, text, now));
+			filmRepository.adjustRating(filmId, rating, 1);
 		} else {
 			int delta = rating - existing.getRating();
-			existing.edit(rating, text, now);
+			existing.edit(went, rating, text, now);
 			if (!existing.isHidden() && delta != 0) {
-				showRepository.adjustRating(showId, delta, 0); // a hidden review doesn't count, edited or not
+				filmRepository.adjustRating(filmId, delta, 0); // a hidden review doesn't count, edited or not
 			}
 			review = existing;
 		}
-		evictShowAfterCommit(showId);
+		evictAfterCommit(filmId);
 		return new Saved(MyReviewResponse.from(review), existing == null);
 	}
 
 	@Transactional
-	public void delete(Long userId, Long showId) {
-		Review review = reviewRepository.lockByShowIdAndUserId(showId, userId)
-				.orElseThrow(() -> new ResourceNotFoundException("You haven't reviewed show " + showId));
+	public void delete(Long userId, Long filmId) {
+		Review review = reviewRepository.lockByFilmIdAndUserId(filmId, userId)
+				.orElseThrow(() -> new ResourceNotFoundException("You haven't reviewed film " + filmId));
 		reviewRepository.delete(review);
 		if (!review.isHidden()) {
-			showRepository.adjustRating(showId, -review.getRating(), -1);
+			filmRepository.adjustRating(filmId, -review.getRating(), -1);
 		}
-		evictShowAfterCommit(showId);
+		evictAfterCommit(filmId);
 	}
 
-	/** A show's visible reviews: "newest" first, or "highest" rated first (newest first among equals). */
+	/** A film's visible reviews: "newest" first, or "highest" rated first (newest first among equals). */
 	@Transactional(readOnly = true)
-	public PageResponse<ReviewResponse> list(Long showId, String sort, int page, int size) {
-		if (!showRepository.existsById(showId)) {
-			throw new ResourceNotFoundException("Show not found with id " + showId);
-		}
+	public PageResponse<ReviewResponse> list(Long filmId, String sort, int page, int size) {
+		requireFilm(filmId);
 		Sort order = switch (sort == null ? "newest" : sort.toLowerCase(Locale.ROOT)) {
 			case "newest" -> Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 			case "highest" -> Sort.by(Sort.Order.desc("rating"), Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
@@ -113,7 +126,7 @@ public class ReviewService {
 		if (page < 0 || size < 1 || size > MAX_PAGE) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "page must be 0 or more and size 1 to " + MAX_PAGE);
 		}
-		return PageResponse.of(reviewRepository.findByShowIdAndHiddenFalse(showId, PageRequest.of(page, size, order)),
+		return PageResponse.of(reviewRepository.findByFilmIdAndHiddenFalse(filmId, PageRequest.of(page, size, order)),
 				ReviewResponse::from);
 	}
 
@@ -135,41 +148,40 @@ public class ReviewService {
 		Review review = reviewRepository.lockById(reviewId)
 				.orElseThrow(() -> new ResourceNotFoundException("Review not found with id " + reviewId));
 		if (review.isHidden() != hidden) {
-			Long showId = review.getShow().getId();
+			Long filmId = review.getFilm().getId();
 			if (hidden) {
 				review.hide(adminId, Instant.now(clock));
-				showRepository.adjustRating(showId, -review.getRating(), -1);
+				filmRepository.adjustRating(filmId, -review.getRating(), -1);
 			} else {
 				review.unhide();
-				showRepository.adjustRating(showId, review.getRating(), 1);
+				filmRepository.adjustRating(filmId, review.getRating(), 1);
 			}
-			evictShowAfterCommit(showId);
+			evictAfterCommit(filmId);
 		}
 		return AdminReviewResponse.from(review);
 	}
 
-	// The cached show and searches carry the average: clear them once the change is visible to other readers.
-	// Before the commit, a reader could put the old average straight back into the cache.
-	private void evictShowAfterCommit(Long showId) {
+	// Every cached screening of the film and every search carries the film's average: clear them once the change
+	// is visible to other readers. Before the commit, a reader could put the old average straight back.
+	private void evictAfterCommit(Long filmId) {
 		AfterCommit.run(() -> {
 			try {
-				Cache show = cacheManager.getCache(CacheConfig.SHOW);
-				if (show != null) {
-					show.evict(showId);
-				}
-				Cache search = cacheManager.getCache(CacheConfig.SHOW_SEARCH);
-				if (search != null) {
-					search.clear();
+				for (String name : List.of(CacheConfig.SHOW, CacheConfig.SHOW_SEARCH, CacheConfig.FILM_SEARCH)) {
+					Cache cache = cacheManager.getCache(name);
+					if (cache != null) {
+						cache.clear();
+					}
 				}
 			} catch (RuntimeException ex) {
 				// Redis down: the entries run out on their own (10 minutes and 60 seconds)
-				log.warn("Could not clear the cached show {} after a review: {}", showId, ex.getMessage());
+				log.warn("Could not clear the cached shows after a review of film {}: {}", filmId, ex.getMessage());
 			}
 		});
 	}
 
-	private Show findShow(Long showId) {
-		return showRepository.findById(showId)
-				.orElseThrow(() -> new ResourceNotFoundException("Show not found with id " + showId));
+	private void requireFilm(Long filmId) {
+		if (!filmRepository.existsById(filmId)) {
+			throw new ResourceNotFoundException("Film not found with id " + filmId);
+		}
 	}
 }

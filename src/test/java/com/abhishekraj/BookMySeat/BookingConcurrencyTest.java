@@ -36,6 +36,7 @@ class BookingConcurrencyTest {
 	@Autowired BookingRepository bookingRepository;
 	@Autowired SeatRepository seatRepository;
 	@Autowired ShowRepository showRepository;
+	@Autowired FilmRepository filmRepository;
 	@Autowired VenueRepository venueRepository;
 	@Autowired UserRepository userRepository;
 	@MockitoBean SeatHoldService holds;
@@ -53,7 +54,7 @@ class BookingConcurrencyTest {
 	void fiftyConfirmsOneSeat_exactlyOneBooking() throws Exception {
 		when(holds.isHeldBy(any(), any(), any())).thenReturn(true); // everyone "holds" it, so only @Version decides
 
-		Seat testSeat = SeatHoldConcurrencyTest.TestData.seat(seatRepository, showRepository, venueRepository);
+		Seat testSeat = SeatHoldConcurrencyTest.TestData.seat(seatRepository, showRepository, venueRepository, filmRepository);
 		Long showId = testSeat.getShow().getId();
 		Long seatId = testSeat.getId();
 		List<Long> userIds = saveUsers(50);

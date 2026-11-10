@@ -203,10 +203,10 @@ public class EmailTemplates {
 		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, calendarEvent(booking));
 	}
 
-	/** After the show: one tap to rate it. The link opens the review page of the web app. */
+	/** After the show: one tap to rate the film. The link opens the film's review page in the web app. */
 	public EmailMessage reviewRequest(Booking booking) {
 		Show show = booking.getShow();
-		String link = url("review/" + show.getId());
+		String link = url("film/" + show.getFilm().getId() + "/review");
 		String subject = "How was " + show.getTitle() + "?";
 		String text = """
 				Hi %s,

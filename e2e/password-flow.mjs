@@ -120,6 +120,7 @@ try {
 	// Browse a show too, so the seat map runs under the CSP
 	await page.goto(`${BASE}/`);
 	await page.locator('.show-card').first().click();
+	await page.locator('.slot').first().click();
 	await page.locator('.seat').first().waitFor();
 	check((await cspViolations(page)).length === 0, `no Content-Security-Policy violations (${(await cspViolations(page)).join(', ')})`);
 } catch (error) {

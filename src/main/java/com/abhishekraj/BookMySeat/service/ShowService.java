@@ -8,12 +8,14 @@ import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import com.abhishekraj.BookMySeat.entity.Booking;
 import com.abhishekraj.BookMySeat.entity.BookingStatus;
 import com.abhishekraj.BookMySeat.entity.SeatCategory;
+import com.abhishekraj.BookMySeat.entity.Film;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
 import com.abhishekraj.BookMySeat.exception.ConflictException;
 import com.abhishekraj.BookMySeat.exception.ResourceNotFoundException;
 import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
+import com.abhishekraj.BookMySeat.repository.FilmRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.ShowSpecifications;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
@@ -41,13 +43,14 @@ import java.util.stream.Collectors;
 public class ShowService {
 
 	private final ShowRepository showRepository;
+	private final FilmRepository filmRepository;
 	private final VenueRepository venueRepository;
 	private final SeatRepository seatRepository;
 	private final BookingRepository bookingRepository;
 	private final ApplicationEventPublisher events;
 	private final Clock clock;
 
-	@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)
+	@CacheEvict(cacheNames = {CacheConfig.SHOW_SEARCH, CacheConfig.FILM_SEARCH}, allEntries = true)
 	@Transactional
 	public ShowResponse create(ShowRequest request) {
 		Show show = new Show();
@@ -90,7 +93,7 @@ public class ShowService {
 
 	@Caching(evict = {
 			@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#id"),
-			@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)})
+			@CacheEvict(cacheNames = {CacheConfig.SHOW_SEARCH, CacheConfig.FILM_SEARCH}, allEntries = true)})
 	@Transactional
 	public ShowResponse update(Long id, ShowRequest request) {
 		Show show = findShow(id);
@@ -101,6 +104,10 @@ public class ShowService {
 		if (booked && !show.getVenue().getId().equals(request.venueId())) {
 			// The seats (and so the tickets) belong to this venue's layout
 			throw new ConflictException("Show " + id + " has bookings, so it can't move to another venue. Cancel it and create a new show.");
+		}
+		if (booked && !show.getFilm().getId().equals(filmFor(request).getId())) {
+			// Its customers booked this film, and their reviews count for it
+			throw new ConflictException("Show " + id + " has bookings, so it can't change film. To rename the film, edit it on the Films page.");
 		}
 		Instant previousStart = show.getStartTime();
 		applyRequest(show, request);
@@ -117,7 +124,7 @@ public class ShowService {
 	 */
 	@Caching(evict = {
 			@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#id"),
-			@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)})
+			@CacheEvict(cacheNames = {CacheConfig.SHOW_SEARCH, CacheConfig.FILM_SEARCH}, allEntries = true)})
 	@Transactional
 	public ShowCancelResponse cancel(Long id) {
 		Show show = showRepository.findForUpdateById(id)
@@ -141,7 +148,7 @@ public class ShowService {
 
 	@Caching(evict = {
 			@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#id"),
-			@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)})
+			@CacheEvict(cacheNames = {CacheConfig.SHOW_SEARCH, CacheConfig.FILM_SEARCH}, allEntries = true)})
 	@Transactional
 	public void delete(Long id) {
 		Show show = findShow(id);
@@ -154,7 +161,9 @@ public class ShowService {
 	private void applyRequest(Show show, ShowRequest request) {
 		Venue venue = venueRepository.findById(request.venueId())
 				.orElseThrow(() -> new ResourceNotFoundException("Venue not found with id " + request.venueId()));
-		show.setTitle(request.title());
+		Film film = filmFor(request);
+		show.setFilm(film);
+		show.setTitle(film.getTitle());
 		show.setStartTime(request.startTime());
 		show.setPrice(request.price());
 		show.setVenue(venue);
@@ -168,6 +177,21 @@ public class ShowService {
 		}
 		show.setAisleAfter(request.aisleAfter() == null || request.aisleAfter().isEmpty() ? null
 				: request.aisleAfter().stream().distinct().sorted().map(String::valueOf).collect(Collectors.joining(",")));
+	}
+
+	/** The request's film: by id, else by title (ignoring case), created if it's new. */
+	private Film filmFor(ShowRequest request) {
+		if (request.filmId() != null) {
+			return filmRepository.findById(request.filmId())
+					.orElseThrow(() -> new ResourceNotFoundException("Film not found with id " + request.filmId()));
+		}
+		String title = request.title() == null ? "" : request.title().strip();
+		if (title.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Give the show a film: filmId, or a title");
+		}
+		int runtime = request.runtimeMinutes() == null ? Film.DEFAULT_RUNTIME_MINUTES : request.runtimeMinutes();
+		filmRepository.insertIfAbsent(title, runtime, Instant.now(clock));
+		return filmRepository.findByTitleIgnoreCase(title).orElseThrow();
 	}
 
 	private Show findShow(Long id) {

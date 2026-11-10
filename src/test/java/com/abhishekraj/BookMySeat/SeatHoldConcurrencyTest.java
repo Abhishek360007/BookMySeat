@@ -4,6 +4,7 @@ import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
 import com.abhishekraj.BookMySeat.repository.SeatRepository;
+import com.abhishekraj.BookMySeat.repository.FilmRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import com.abhishekraj.BookMySeat.service.SeatHoldService;
@@ -31,6 +32,7 @@ class SeatHoldConcurrencyTest {
 	@Autowired SeatHoldService holds;
 	@Autowired VenueRepository venueRepository;
 	@Autowired ShowRepository showRepository;
+	@Autowired FilmRepository filmRepository;
 	@Autowired SeatRepository seatRepository;
 
 	@AfterEach
@@ -42,7 +44,7 @@ class SeatHoldConcurrencyTest {
 
 	@Test
 	void fiftyUsersOneSeat_exactlyOneHoldWins() throws Exception {
-		Seat seat = TestData.seat(seatRepository, showRepository, venueRepository);
+		Seat seat = TestData.seat(seatRepository, showRepository, venueRepository, filmRepository);
 		Long showId = seat.getShow().getId();
 		Long seatId = seat.getId();
 
@@ -81,7 +83,7 @@ class SeatHoldConcurrencyTest {
 	/** Shared test-data helpers. */
 	static final class TestData {
 
-		static Seat seat(SeatRepository seats, ShowRepository shows, VenueRepository venues) {
+		static Seat seat(SeatRepository seats, ShowRepository shows, VenueRepository venues, FilmRepository films) {
 			Venue venue = new Venue();
 			venue.setName("Test Venue");
 			venue.setCity("Test City");
@@ -89,6 +91,7 @@ class SeatHoldConcurrencyTest {
 
 			Show show = new Show();
 			show.setTitle("Test Show");
+			show.setFilm(TestFilms.named(films, "Test Show"));
 			show.setStartTime(Instant.now().plus(1, ChronoUnit.DAYS));
 			show.setPrice(new BigDecimal("100.00"));
 			show.setVenue(venue);

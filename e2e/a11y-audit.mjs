@@ -175,13 +175,17 @@ try {
 	await page.getByRole('button', { name: 'Join waitlist' }).click();
 	await audit(page, 'on the waitlist', () => page.locator('#waitlist-status').waitFor());
 	await page.goto(`${BASE}/#/review/${show.id}`);
-	await audit(page, 'review before the show', () => page.getByText('once it has started').waitFor());
+	await audit(page, 'review before the show', () => page.getByText('once your screening has started').waitFor());
 	await untilStarted(started);
 	await rest(`/api/shows/${started.id}/reviews/me`, { method: 'PUT', token: user, body: { rating: 4, text: 'Great sound.\nComfy seats.' } });
 	await page.goto(`${BASE}/#/review/${started.id}`);
 	await audit(page, 'review form', () => page.locator('#review-delete:not([hidden])').waitFor());
 	await page.goto(`${BASE}/#/show/${started.id}`);
 	await audit(page, 'show with reviews', () => page.locator('.review').first().waitFor());
+	await page.goto(`${BASE}/#/film/${show.filmId}`);
+	await audit(page, 'film with showtimes', () => page.locator('.slot').first().waitFor());
+	await page.goto(`${BASE}/#/film/${started.filmId}`);
+	await audit(page, 'film with reviews', () => page.locator('.review').first().waitFor());
 	await page.goto(`${BASE}/#/bookings`);
 	await audit(page, 'my bookings', () => page.locator('#waitlist').waitFor());
 	await page.goto(`${BASE}/#/ticket/${booking.id}`);
@@ -214,6 +218,8 @@ try {
 	await audit(adminPage, 'admin promo codes', () => adminPage.locator('#new-code').waitFor());
 	await adminPage.goto(`${BASE}/#/admin/reviews`);
 	await audit(adminPage, 'admin reviews', () => adminPage.locator('[data-review]').first().waitFor());
+	await adminPage.goto(`${BASE}/#/admin/films`);
+	await audit(adminPage, 'admin films', () => adminPage.locator('[data-edit]').first().waitFor());
 	await adminContext.close();
 } catch (error) {
 	failed = `step failed: ${error.message.split('\n')[0]}`;

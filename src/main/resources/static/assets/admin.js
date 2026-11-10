@@ -1,6 +1,6 @@
 // Admin pages of the web app. Loaded on demand (import()) only when an admin opens #/admin, so customers never
 // download it. Every action goes through the same ADMIN-only REST API that Swagger documents.
-import { api, app, esc, money, when, toast, state, every, starsText, day } from './app.js';
+import { api, app, esc, money, when, toast, state, every, starsText, day, runtimeText } from './app.js';
 
 const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : 0);
 
@@ -30,7 +30,8 @@ export async function renderAdmin(params) {
 	const page = Number(params.get('page') || 0);
 
 	app.innerHTML = `
-		<div class="row spread"><h1>Admin</h1><div class="row"><a class="btn btn-ghost" href="#/admin/reviews">Reviews</a>
+		<div class="row spread"><h1>Admin</h1><div class="row"><a class="btn btn-ghost" href="#/admin/films">Films</a>
+			<a class="btn btn-ghost" href="#/admin/reviews">Reviews</a>
 			<a class="btn btn-ghost" href="#/admin/promo-codes">Promo codes</a>
 			<a class="btn btn-primary" href="#/admin/new">New show</a></div></div>
 		<div class="kpis" id="kpis"><p class="muted">Loading…</p></div>
@@ -146,7 +147,7 @@ export function venueOptions(venues, selectedId) {
 
 export async function renderNewShow() {
 	if (!requireAdmin()) return;
-	const venues = await api('/api/venues');
+	const [venues, films] = await Promise.all([api('/api/venues'), api('/api/admin/films?size=100', { auth: true })]);
 	// Tomorrow, 7 pm India time
 	const tomorrow = fromLocalInput(`${toLocalInput(Date.now() + 24 * 3600_000).slice(0, 10)}T19:00`);
 
@@ -154,7 +155,10 @@ export async function renderNewShow() {
 		<a href="#/admin" class="small">← Admin</a>
 		<h1>New show</h1>
 		<form class="card admin-form" id="new-show" novalidate>
-			<label>Title <input name="title" required maxlength="150" placeholder="e.g. Dune: Part Three"></label>
+			<label>Film title <input name="title" required maxlength="150" placeholder="e.g. Dune: Part Three" list="film-titles" autocomplete="off" aria-describedby="film-help"></label>
+			<datalist id="film-titles">${films.content.map((f) => `<option value="${esc(f.title)}">`).join('')}</datalist>
+			<p class="muted small" id="film-help">An existing film's title adds a showtime to it; a new title creates the film (details on the <a href="#/admin/films">Films</a> page).</p>
+			<label id="runtime-field">Runtime of the new film (minutes) <input name="runtimeMinutes" type="number" min="1" max="600" placeholder="180"></label>
 			<div class="field"><label for="new-show-venue">Venue</label>
 				<select name="venueId" id="new-show-venue">${venueOptions(venues, venues[0]?.id)}<option value="new" ${venues.length ? '' : 'selected'}>+ New venue…</option></select>
 			</div>
@@ -205,6 +209,10 @@ export async function renderNewShow() {
 			: `${rows * per || 0} seats: A1 to ${last}${per || '?'} (${parts.join(', ')}) · ${money.format(full)} if every seat sells`;
 	};
 	form.venueId.onchange = () => { document.getElementById('new-venue').hidden = form.venueId.value !== 'new'; };
+	// The runtime only matters for a film that doesn't exist yet
+	const known = new Set(films.content.map((f) => f.title.toLowerCase()));
+	const runtimeField = () => { document.getElementById('runtime-field').hidden = known.has(form.title.value.trim().toLowerCase()); };
+	form.title.addEventListener('input', runtimeField);
 	form.oninput = preview;
 	preview();
 
@@ -224,7 +232,8 @@ export async function renderNewShow() {
 			}
 			if (!f.startTime) throw new Error('Pick a start time');
 			const show = await api('/api/shows', { method: 'POST', auth: true,
-				body: { title: f.title.trim(), startTime: fromLocalInput(f.startTime), price: Number(f.price), venueId,
+				body: { title: f.title.trim(), runtimeMinutes: f.runtimeMinutes ? Number(f.runtimeMinutes) : null,
+					startTime: fromLocalInput(f.startTime), price: Number(f.price), venueId,
 					categoryPrices: categoryPricesOf(f), aisleAfter: parseAisles(f.aisles) } });
 			showId = show.id;
 			await api(`/api/shows/${showId}/seats`, { method: 'POST', auth: true,
@@ -730,23 +739,23 @@ export async function renderReviews(params) {
 		}
 		box.innerHTML = `
 			<div class="card table-wrap" tabindex="0" role="region" aria-label="Reviews"><table class="table">
-				<thead><tr><th>Show</th><th>Rating</th><th>Review</th><th>By</th><th>Date</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
+				<thead><tr><th>Film</th><th>Rating</th><th>Review</th><th>By</th><th>Date</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
 				<tbody>${result.content.map((r) => `<tr>
-					<td><a href="#/show/${esc(r.showId)}">${esc(r.showTitle)}</a></td>
+					<td><a href="#/film/${esc(r.filmId)}">${esc(r.filmTitle)}</a></td>
 					<td><span class="stars-read" aria-hidden="true">${starsText(r.rating)}</span><span class="sr-only">${r.rating} out of 5</span></td>
 					<td class="small review-text">${r.text ? esc(r.text) : '<span class="muted">no text</span>'}</td>
 					<td class="small">${esc(r.authorName)}<div class="muted">${esc(r.authorEmail)}</div></td>
 					<td class="small">${esc(day.format(new Date(r.createdAt)))}${r.edited ? '<div class="muted">edited</div>' : ''}</td>
 					<td><span class="status ${r.hidden ? 'CANCELLED' : 'CONFIRMED'}">${r.hidden ? 'HIDDEN' : 'VISIBLE'}</span></td>
 					<td><button class="btn btn-ghost btn-small" data-review="${r.id}" data-hidden="${r.hidden}"
-						aria-label="${r.hidden ? 'Show again' : 'Hide'}: review by ${esc(r.authorName)} of ${esc(r.showTitle)}">${r.hidden ? 'Show again' : 'Hide'}</button></td>
+						aria-label="${r.hidden ? 'Show again' : 'Hide'}: review by ${esc(r.authorName)} of ${esc(r.filmTitle)}">${r.hidden ? 'Show again' : 'Hide'}</button></td>
 				</tr>`).join('')}</tbody></table></div>
 			<div class="row spread pager">
 				<a class="btn btn-ghost" ${page === 0 ? 'aria-disabled="true"' : `href="#/admin/reviews?show=${view}&page=${page - 1}"`}>Previous</a>
 				<span class="muted small">Page ${result.page + 1} of ${Math.max(result.totalPages, 1)}</span>
 				<a class="btn btn-ghost" ${page + 1 >= result.totalPages ? 'aria-disabled="true"' : `href="#/admin/reviews?show=${view}&page=${page + 1}"`}>Next</a>
 			</div>
-			<p class="muted small">A hidden review isn't shown on the show's page and doesn't count in its rating. Its author still sees it and is told it's hidden.</p>`;
+			<p class="muted small">A hidden review isn't shown with the film and doesn't count in its rating. Its author still sees it and is told it's hidden.</p>`;
 		box.querySelectorAll('[data-review]').forEach((b) => {
 			b.onclick = async () => {
 				const action = b.dataset.hidden === 'true' ? 'unhide' : 'hide';
@@ -761,6 +770,104 @@ export async function renderReviews(params) {
 		});
 		// After hiding, focus stays on that review's button (it moves out of a filtered view: then the table)
 		if (focusId) (box.querySelector(`[data-review="${focusId}"]`) ?? box.querySelector('.table-wrap'))?.focus();
+	}
+	await load();
+}
+
+// ---------- #/admin/films ----------
+
+export async function renderFilms() {
+	if (!requireAdmin()) return;
+	app.innerHTML = `
+		<a href="#/admin" class="small">← Admin</a>
+		<h1>Films</h1>
+		<div id="film-list"><p class="muted">Loading…</p></div>
+		<h2 id="film-form-h">New film</h2>
+		<form class="card admin-form" id="film-form" novalidate aria-labelledby="film-form-h">
+			<div class="form-row">
+				<label>Title <input name="title" required maxlength="150" placeholder="e.g. Arrival"></label>
+				<label>Runtime (minutes) <input name="runtimeMinutes" type="number" min="1" max="600" required value="120"></label>
+			</div>
+			<div class="form-row">
+				<label>Language <input name="language" maxlength="40" placeholder="optional"></label>
+				<div class="field"><label for="film-certificate">Certificate</label>
+					<select name="certificate" id="film-certificate"><option value="">None</option><option>U</option><option>UA</option><option>A</option><option>S</option></select></div>
+			</div>
+			<label>Synopsis <textarea name="synopsis" rows="3" maxlength="2000" placeholder="optional"></textarea></label>
+			<p class="form-error" id="film-error" role="alert" hidden></p>
+			<div class="row"><button class="btn btn-primary" id="film-save">Create film</button>
+				<button type="button" class="btn btn-ghost" id="film-cancel" hidden>Cancel editing</button></div>
+		</form>`;
+
+	const form = document.getElementById('film-form');
+	const error = document.getElementById('film-error');
+	let editing = null; // the film being edited, or null for a new one
+	const setMode = (film) => {
+		editing = film;
+		document.getElementById('film-form-h').textContent = film ? `Edit ${film.title}` : 'New film';
+		document.getElementById('film-save').textContent = film ? 'Save film' : 'Create film';
+		document.getElementById('film-cancel').hidden = !film;
+		form.title.value = film?.title ?? '';
+		form.runtimeMinutes.value = film?.runtimeMinutes ?? 120;
+		form.language.value = film?.language ?? '';
+		form.certificate.value = film?.certificate ?? '';
+		form.synopsis.value = film?.synopsis ?? '';
+		error.hidden = true;
+	};
+	document.getElementById('film-cancel').onclick = () => { setMode(null); form.title.focus(); };
+
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		error.hidden = true;
+		const f = Object.fromEntries(new FormData(form));
+		const button = document.getElementById('film-save');
+		button.disabled = true;
+		try {
+			if (!f.title.trim()) throw new Error('Give the film a title');
+			const body = { title: f.title.trim(), runtimeMinutes: Number(f.runtimeMinutes), language: f.language.trim() || null,
+				certificate: f.certificate || null, synopsis: f.synopsis.trim() || null };
+			const saved = editing
+				? await api(`/api/admin/films/${editing.id}`, { method: 'PUT', auth: true, body })
+				: await api('/api/admin/films', { method: 'POST', auth: true, body });
+			toast(editing ? `Saved ${saved.title}` : `Created ${saved.title}`);
+			setMode(null);
+			await load();
+			document.querySelector(`#film-list [data-film="${saved.id}"]`)?.focus();
+		} catch (e) {
+			error.textContent = e.message;
+			error.hidden = false;
+		} finally {
+			button.disabled = false;
+		}
+	};
+
+	async function load() {
+		const result = await api('/api/admin/films?size=100', { auth: true });
+		const box = document.getElementById('film-list');
+		if (!box) return;
+		if (result.content.length === 0) {
+			box.innerHTML = '<div class="card empty"><p class="muted">No films yet. Create one below, or create a show with a new title.</p></div>';
+			return;
+		}
+		box.innerHTML = `
+			<div class="card table-wrap" tabindex="0" role="region" aria-label="Films"><table class="table">
+				<thead><tr><th>Title</th><th>Runtime</th><th>Language</th><th>Certificate</th><th>Rating</th><th class="num">Shows</th><th><span class="sr-only">Action</span></th></tr></thead>
+				<tbody>${result.content.map((f) => `<tr>
+					<td><strong tabindex="-1" data-film="${f.id}">${esc(f.title)}</strong></td>
+					<td>${esc(runtimeText(f.runtimeMinutes))}</td>
+					<td>${esc(f.language ?? '')}</td>
+					<td>${esc(f.certificate ?? '')}</td>
+					<td>${f.ratingCount ? `<span class="stars-read" aria-hidden="true">★</span> ${Number(f.ratingAverage).toFixed(1)} <span class="muted small">(${f.ratingCount})</span>` : '<span class="muted">none</span>'}</td>
+					<td class="num">${f.shows}</td>
+					<td><button class="btn btn-ghost btn-small" data-edit="${f.id}" aria-label="Edit ${esc(f.title)}">Edit</button></td>
+				</tr>`).join('')}</tbody></table></div>
+			<p class="muted small">A new title is carried to the film's shows; a new runtime moves the end of their calendar events and when people are asked how it was.</p>`;
+		box.querySelectorAll('[data-edit]').forEach((b) => {
+			b.onclick = () => {
+				setMode(result.content.find((f) => String(f.id) === b.dataset.edit));
+				form.title.focus();
+			};
+		});
 	}
 	await load();
 }

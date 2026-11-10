@@ -78,6 +78,8 @@ class ReviewRequestTest {
 		bookingRepository.deleteAll();
 		seatRepository.deleteAll();
 		showRepository.deleteAll();
+		// Films outlive their shows; these tests count ratings, so start each one from fresh films
+		jdbc.update("delete from films f where not exists (select 1 from shows s where s.film_id = f.id)");
 		venueRepository.deleteAll();
 		userRepository.deleteAll(userRepository.findAll().stream().filter(u -> u.getRole() != Role.ADMIN).toList());
 		redis.delete(redis.keys("hold:*"));
@@ -109,7 +111,7 @@ class ReviewRequestTest {
 		outboxRepository.deleteAll(); // the confirmation and cancellation emails
 
 		startedAgo(over, "4 hours");
-		startedAgo(running, "1 hour");    // not over yet (3 hours after the start)
+		startedAgo(running, "1 hour");    // not over yet (the film runs 3 hours, the default)
 		startedAgo(longAgo, "8 days");    // outside the 7-day window
 		startedAgo(cancelled, "4 hours");
 		// Ravi already reviewed the show on the night
@@ -122,8 +124,10 @@ class ReviewRequestTest {
 				.containsExactlyInAnyOrder("ask-asha@example.com", "ask-meera@example.com", "ask-guest@example.com");
 		OutboxEmail toMeera = emails.stream().filter(e -> e.getRecipient().equals("ask-meera@example.com")).findFirst().orElseThrow();
 		assertThat(toMeera.getSubject()).isEqualTo("How was Over Show?");
-		assertThat(toMeera.getBodyText()).contains("Hi Meera", "Over Show at Ask Venue", "/#/review/" + over);
-		assertThat(toMeera.getBodyHtml()).contains("href=\"http://localhost:8080/#/review/" + over + "\"");
+		long overFilm = ((Number) JsonPath.read(mvc.perform(get("/api/shows/" + over)).andReturn().getResponse()
+				.getContentAsString(), "$.filmId")).longValue();
+		assertThat(toMeera.getBodyText()).contains("Hi Meera", "Over Show at Ask Venue", "/#/film/" + overFilm + "/review");
+		assertThat(toMeera.getBodyHtml()).contains("href=\"http://localhost:8080/#/film/" + overFilm + "/review\"");
 
 		// Every booking of the show was looked at once, Ravi's too; nothing for the others
 		assertThat(jdbc.queryForObject("select count(*) from bookings where show_id = ? and review_requested_at is not null",

@@ -37,9 +37,8 @@
 - **E-tickets with QR check-in:** every booking gets an HMAC-signed ticket code, shown as a QR code in the web app and attached to the confirmation email. Staff scan it at the door with a phone camera; it gets in exactly once, even with 10 scanners reading it at the same moment.
 - **Waitlist for sold-out shows:** customers join the line for 1 to 6 seats. When a booking is cancelled, the freed seats are held in Redis for the first person whose request fits, for 15 minutes, before the cancel even commits, so nobody can grab them in between. They get an email, book the seats like any other held seats, and an offer that runs out or is declined goes to the next person. See [Waitlist](#waitlist).
 - **Promo codes:** percentage or fixed discounts with total and per-person limits that hold under parallel bookings (each use is counted under the code's row lock; 12 people racing for 5 uses get exactly 5), a use reserved for a Razorpay order and given back when it expires, is refunded or the booking is cancelled, and the discount kept on the booking like its price. See [Promo codes](#promo-codes).
-- **Reviews from people who went:** a rating from 1 to 5 and an optional text, only with a confirmed booking for a show that has started, one per person per show. The average sits on the show itself, kept exact by atomic updates in the review's transaction (6 saves by one person and 8 people at once give one review each and the right sum; the test fails without the lock), a "How was it?" email after the show, and admin moderation. See [Reviews](#reviews).
-- **Best seats in one click:** ask for 1 to 10 seats (and a category) and the server picks the best block together, in the middle of the row about two thirds back, never across an aisle, and holds it in the same call. When someone takes that block first it tries the next best; 8 people asking at once never get the same seat. See [Best seats](#best-seats).
-- **Calendar events:** every confirmation email carries the show as an `.ics` file next to the QR ticket, a reschedule email carries an updated one that moves the event, and the ticket has **Add to calendar**. See [E-tickets and check-in](#e-tickets-and-check-in).
+- **Films and their screenings:** the home page lists films, each with its rating, runtime, the next showtime and the cheapest seat; a film's page has its showtimes by day (in your city) and its reviews. Shows join a film by id or by title (created on the fly, one per title even when several shows are created at once), and the runtime ends the calendar event and times the review email. See [Films](#films).
+- **Reviews from people who went:** a rating from 1 to 5 and an optional text, only with a confirmed booking for a screening that has started, one per person per film whichever screening they saw. The average sits on the film itself, kept exact by atomic updates in the review's transaction (6 saves by one person and 8 people at once give one review each and the right sum; the test fails without the lock), a "How was it?" email after the show, and admin moderation. See [Reviews](#reviews).
 - **Accessible web app:** an axe-core audit of every page (WCAG 2.2 AA, phone and desktop, light and dark, 320 px wide) passes with no violations, and a browser test books seats with the keyboard alone: the seat map is one Tab stop with arrow keys, focus survives the live refresh, and screen readers hear about holds and waitlist offers. See [Accessibility](#accessibility).
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
@@ -231,7 +230,7 @@ sequenceDiagram
 | How does the email get the ticket? | The outbox stores the QR PNG with the email, so a retry sends exactly what was queued with the booking, over SMTP or Brevo |
 | How does the show get into my calendar? | The confirmation email also carries `booking-42.ics` (RFC 5545: Google Calendar, Outlook and Apple Calendar import it), and the ticket and My bookings have **Add to calendar** (`GET /api/bookings/{id}/ticket.ics`). The event has the venue's address, the seats, the ticket code and a reminder an hour before |
 | And when the show moves? | The reschedule email carries an updated file with the same `UID` and a higher `SEQUENCE` (the minute it was made), so a calendar moves the event instead of adding a second one |
-| How long is the event? | 3 hours: shows have no stored length, so the event blocks a typical film or play |
+| How long is the event? | The film's runtime (180 minutes for a film created without one) |
 | Anything fiddly? | Times are written in UTC (no time zone blocks needed); commas, semicolons and line breaks in titles are escaped; lines over 75 bytes are folded without cutting a UTF-8 character in half (`₹` is 3 bytes); every line ends in CRLF. `CalendarEventsTest` checks each |
 
 ## Waitlist
@@ -301,29 +300,50 @@ sequenceDiagram
 | Switched off? | New bookings can't use it; bookings made with it keep their discount |
 | Counted? | `promo_codes.uses` by result: `redeemed`, `refused`, `released` |
 
-## Reviews
+## Films
 
-People who went to a show rate it from 1 to 5 stars, with an optional text. The show's page lists the reviews (newest or highest rated first) under its average.
+A film is what its screenings have in common: title, runtime, language, certificate (U, UA, A, S) and a synopsis. Admins keep them on the **Films** page; a show belongs to one film.
 
 ```mermaid
 flowchart LR
-    B[Confirmed booking<br/>show has started] -->|PUT /api/shows/42/reviews/me| R[(reviews row<br/>one per person per show)]
-    R -->|same transaction:<br/>rating_sum + 4, rating_count + 1| S[(shows row)]
-    S --> C[Show cache cleared<br/>after commit]
-    J[Job every 15 min<br/>ShedLock] -->|3 h after the start,<br/>within 7 days| E[How was it? email<br/>through the outbox]
+    F[(films<br/>title unique ignoring case<br/>runtime, rating sum and count)] --- S1[(show: Pune, Fri 6:30 pm)]
+    F --- S2[(show: Mumbai, Sat 9 pm)]
+    S1 --- B[(bookings)]
+    F --- R[(reviews<br/>one per person per film)]
 ```
 
 | Question | Answer |
 |---|---|
-| Who can review? | Only someone with a confirmed booking for the show, once it has started. Anyone else gets `409` with a `reason`: `NO_BOOKING` (no booking, or only a cancelled one) or `NOT_STARTED` |
-| How many reviews per person? | One per show (a unique constraint). Writing again edits it: `201` the first time, `200` after |
-| How is the average kept? | The show stores the sum and count of its visible ratings. Every change (new, edited, deleted, hidden, shown again) adds its difference with one atomic `UPDATE shows SET rating_sum = rating_sum + ?` in the review's transaction, so listings show the average without counting reviews. The JPA columns are read-only, so an admin saving the show can't write an old value back, and a `CHECK` keeps the sum between 1 and 5 times the count |
-| Two saves at the same moment? | The first takes a row lock on the person's bookings for the show, so a second save (a double click, two tabs) waits and then edits the review instead of failing on the unique constraint. Edits, deletes and hiding lock the review row. `ReviewApiTest` fires 6 saves by one person (exactly one `201`) and 8 people at once (count 9, sum exact). Without the lock the test fails |
-| And the cache? | The show and the search results are cached in Redis with the average in them, so a change clears them, after the commit. Before it, a reader could put the old average straight back |
+| How does a show get its film? | `filmId`, or a `title`: the film with that title (ignoring case) or a new one (`runtimeMinutes` for it, 180 if left out). Creating shows keeps working as before, and the new-show form suggests the existing titles |
+| Two shows with a new title at the same moment? | One film: the new film is inserted with `ON CONFLICT DO NOTHING` on the unique index of `lower(title)`, then read back. `FilmApiTest` creates 6 shows at once |
+| What does the home page show? | Films with a screening coming up (in the city, if one is searched), the soonest first: rating, runtime, the number of showtimes, the next one and the cheapest seat. Three queries for any page: the page of film ids and its count, the films, their screenings with venues and prices. Cached in Redis for 60 seconds and cleared by any show, film or review change, like the show search |
+| Renaming a film? | Its shows take the new title in the same transaction (tickets, emails and bookings read it there), and the cached shows are cleared |
+| Can a show change film? | Not once it has bookings: its customers booked that film and their reviews count for it (`409`, like moving venue) |
+| And the runtime? | The calendar event ends at the start plus the runtime, and the "How was it?" email goes out 30 minutes after that |
+| Existing shows? | V22 made one film per title (ignoring case) with 180 minutes, the length assumed until then, moved the ratings from the shows to the films (counted again from the reviews) and kept the newest review where someone had reviewed two screenings of one film. The shows' own rating columns stay for one release, because the previous version still reads them for a moment during the deploy |
+
+## Reviews
+
+People who went to a screening rate the film from 1 to 5 stars, with an optional text. The film's page and each of its screenings list the reviews (newest or highest rated first) under the film's average.
+
+```mermaid
+flowchart LR
+    B[Confirmed booking<br/>screening has started] -->|PUT /api/films/7/reviews/me| R[(reviews row<br/>one per person per film)]
+    R -->|same transaction:<br/>rating_sum + 4, rating_count + 1| F[(films row)]
+    F --> C[Cached shows and searches<br/>cleared after commit]
+    J[Job every 15 min<br/>ShedLock] -->|30 min after the end,<br/>within 7 days| E[How was it? email<br/>through the outbox]
+```
+
+| Question | Answer |
+|---|---|
+| Who can review? | Only someone with a confirmed booking for one of the film's screenings, once that screening has started. Anyone else gets `409` with a `reason`: `NO_BOOKING` (no booking, or only a cancelled one) or `NOT_STARTED` |
+| How many reviews per person? | One per film (a unique constraint), whichever screening and however many. Writing again edits it: `201` the first time, `200` after. `/api/shows/{id}/reviews/...` does the same for that screening's film |
+| How is the average kept? | The film stores the sum and count of its visible ratings. Every change (new, edited, deleted, hidden, shown again) adds its difference with one atomic `UPDATE films SET rating_sum = rating_sum + ?` in the review's transaction, so listings show the average without counting reviews. The JPA columns are read-only, so an admin saving the film can't write an old value back, and a `CHECK` keeps the sum between 1 and 5 times the count |
+| Two saves at the same moment? | The first takes a row lock on the person's bookings for the film's screenings (matched in a subquery, so only the booking rows are locked), so a second save (a double click, two tabs) waits and then edits the review instead of failing on the unique constraint. Edits, deletes and hiding lock the review row. `ReviewApiTest` fires 6 saves by one person (exactly one `201`) and 8 people at once (count 9, sum exact). Without the lock the test fails |
+| And the cache? | Every cached screening and search carries the film's average, so a change clears them, after the commit. Before it, a reader could put the old average straight back |
 | What do others see of me? | Your first name and the initial of your last name ("Asha K."), never the email. Text is trimmed, line breaks kept, control characters dropped, at most 1,000 characters, and escaped when shown |
-| Per show or per film? | Per show: a show is one screening with its own title, and there is no film to group screenings under. So the ratings are on the page of the screening that was rated, and upcoming screenings of the same film don't show them yet. A film entity (title, poster, its screenings) would carry them over |
-| Moderation? | Admins see every review with its author on the **Reviews** page and can hide one: it leaves the list and the average, its author still sees it (and is told it's hidden), and it can be shown again |
-| "How was it?" | A job every 15 minutes (one instance, ShedLock) looks at each confirmed booking once, 3 hours after its show started (the show is over; shows store no length). It emails a link to the review page unless that person already reviewed the show or was asked through another booking. Shows that started more than 7 days ago are skipped, so a first deploy or a long sleep never emails about something long past. The demo account is never emailed |
+| Moderation? | Admins see every review with its film and author on the **Reviews** page and can hide one: it leaves the list and the average, its author still sees it (and is told it's hidden), and it can be shown again |
+| "How was it?" | A job every 15 minutes (one instance, ShedLock) looks at each confirmed booking once, 30 minutes after its show ended (start plus the film's runtime). It emails a link to the film's review page unless that person already reviewed the film or was asked about it through another booking. Shows that started more than 7 days ago are skipped, so a first deploy or a long sleep never emails about something long past. The demo account is never emailed |
 
 ## Emails
 
@@ -417,7 +437,7 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST / PUT / DELETE | `/api/venues/**` | Admin | Manage venues |
 | GET | `/api/shows?venueId=`, `/api/shows/{id}` | Public | Browse shows and their prices |
 | GET | `/api/shows/search?city=&q=&from=&to=&page=&size=&sort=` | Public | Search upcoming shows by city, title text and date range (paginated, soonest first) |
-| POST / PUT / DELETE | `/api/shows/**` | Admin | Manage shows (with bookings: the venue is locked and a new time emails the customers) |
+| POST / PUT / DELETE | `/api/shows/**` | Admin | Manage shows: `filmId` or a `title` (an existing film's, or a new one with `runtimeMinutes`); with bookings the venue and film are locked and a new time emails the customers |
 | GET | `/api/shows/{showId}/seats` | Public | Seat map (`AVAILABLE` / `HELD` / `BOOKED`), each seat with its category and price |
 | GET | `/api/shows/{showId}/seats/best?count=&category=` | Public | The best `count` free seats together (1 to 10) with their price, without holding them; `409` when no row has that many |
 | POST | `/api/shows/{showId}/seats` | Admin | Generate seats, e.g. 5 rows × 10 = A1–E10, with optional `premiumRows` / `reclinerRows` at the back |
@@ -437,9 +457,12 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/waitlist` | User | Join the waitlist of a sold-out show: `{showId, seats}` (1 to 6), once per show |
 | DELETE | `/api/waitlist/{showId}` | User | Leave the waitlist (with an offer: decline it; the seats go to the next person) |
 | GET | `/api/waitlist/me` | User | Your places in line: `WAITING` with your position, or `OFFERED` with the held seats and when the offer ends |
-| GET | `/api/shows/{showId}/reviews?sort=newest\|highest&page=&size=` | Public | A show's visible reviews (author as "Asha K."); its average and count are on the show (`ratingAverage`, `ratingCount`) |
-| PUT | `/api/shows/{showId}/reviews/me` | User | Write or edit your review: `{rating, text?}`; needs a confirmed booking for a show that has started (`409` with the `reason` otherwise) |
-| DELETE | `/api/shows/{showId}/reviews/me` | User | Delete your review |
+| GET | `/api/films?q=&city=&page=&size=` | Public | Films with a screening coming up, soonest first: rating, runtime, number of showtimes, the next three and the cheapest seat |
+| GET | `/api/films/{id}` | Public | A film with its details, rating and every screening still to come |
+| GET | `/api/films/{filmId}/reviews?sort=newest\|highest&page=&size=` | Public | A film's visible reviews (author as "Asha K."); its average and count are on the film and on each of its shows (`ratingAverage`, `ratingCount`) |
+| PUT | `/api/films/{filmId}/reviews/me` | User | Write or edit your review: `{rating, text?}`; needs a confirmed booking for one of its screenings that has started (`409` with the `reason` otherwise) |
+| DELETE | `/api/films/{filmId}/reviews/me` | User | Delete your review |
+| GET, PUT, DELETE | `/api/shows/{showId}/reviews`, `/reviews/me` | Public / User | The same for that screening's film |
 | GET | `/api/reviews/me` | User | Your reviews, with `hidden` if an admin hid one |
 | POST | `/api/admin/check-in` | Admin | Check a ticket in at the door (`showId` + scanned `code`); once only |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
@@ -451,6 +474,8 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/admin/promo-codes` | Admin | Create a promo code: `PERCENT` (optional `maxDiscount`) or `FLAT`, optional `minTotal`, `showId`, `validFrom` / `validUntil`, `maxUses`, `maxUsesPerUser` (default 1) |
 | GET | `/api/admin/promo-codes?page=&size=&sort=` | Admin | Promo codes with their uses, newest first |
 | POST | `/api/admin/promo-codes/{id}/disable`, `/enable` | Admin | Switch a code off or on; bookings made with it keep their discount |
+| GET | `/api/admin/films?q=&page=&size=` | Admin | Films with how many shows each has |
+| POST / PUT | `/api/admin/films`, `/api/admin/films/{id}` | Admin | Create or edit a film (title unique ignoring case; a new title is carried to its shows) |
 | GET | `/api/admin/reviews?hidden=&page=&size=` | Admin | Reviews with their show and author, newest first |
 | POST | `/api/admin/reviews/{id}/hide`, `/unhide` | Admin | Hide a review (not listed, not in the average) or show it again |
 
@@ -496,7 +521,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 
 | Feature | Detail |
 |---|---|
-| Show search | City and title filters on `GET /api/shows/search`, paginated |
+| Films | The home page lists the films showing (title and city filters, paginated); a film's page has its synopsis, showtimes by day (keeping the city searched) and reviews; the seat map links back to the film |
 | Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Pick best seats | Choose how many seats (and a type) and the server picks and holds the best ones together; which seats is announced, and a show without that many together says so |
@@ -505,8 +530,8 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Waitlist | A sold-out show offers **Join waitlist** (1 to 6 seats) and then shows your place in line; an offer appears within one refresh as held seats with a countdown, to book or **Decline**. My bookings lists your places in line |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
-| Admin pages | Dashboard, new show form, a page per show, **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
-| Reviews | The show's page carries the average ("★ 4.3 · 12 reviews") and lists the reviews, newest or highest rated first. After the show, My bookings swaps **Cancel** for **Rate this show** (or your stars, to edit). The review page is a 5-star radio group (arrow keys work, lit stars are filled and the others outlined, so not only the colour tells them apart) and an optional text |
+| Admin pages | Dashboard, new show form, a page per show, **Films** (create and edit, with their number of shows), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
+| Reviews | The film's page and its screenings carry the average ("★ 4.3 · 12 reviews") and list the reviews, newest or highest rated first. After the start, My bookings swaps **Cancel** for **Rate this film** (or your stars, to edit). The review page is a 5-star radio group (arrow keys work, lit stars are filled and the others outlined, so not only the colour tells them apart) and an optional text |
 | E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned. **Add to calendar** on the ticket and in My bookings downloads the `.ics` (with the login token, so through a `blob:` URL) |
 | Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
 | Passwords | "Forgot password?" in the login dialog, a reset page for the emailed link, and an account page (click your email in the top bar) to change the password |
@@ -516,7 +541,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 
 ### Accessibility
 
-Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) runs [axe-core](https://github.com/dequelabs/axe-core) (WCAG 2.2 A and AA rules plus axe's best practices) on 26 pages, from the seat map, a refused promo code and the login dialog to the ticket, a review and the admin reviews, each on a desktop and a phone screen in the light and the dark theme, and checks that each page fits 320 px wide (a 1280 px window at 400% zoom) without sideways scrolling: 130 checks. The promo codes page failed that last check at first: a visually hidden table heading made it 124 px too wide, because the scrolling table around it wasn't positioned. [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) books two seats without the mouse and checks where focus goes on the way.
+Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) runs [axe-core](https://github.com/dequelabs/axe-core) (WCAG 2.2 A and AA rules plus axe's best practices) on 29 pages, from the films, the seat map, a refused promo code and the login dialog to the ticket, a review and the admin films and reviews, each on a desktop and a phone screen in the light and the dark theme, and checks that each page fits 320 px wide (a 1280 px window at 400% zoom) without sideways scrolling: 145 checks. The promo codes page failed that last check at first: a visually hidden table heading made it 124 px too wide, because the scrolling table around it wasn't positioned. [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) books two seats without the mouse and checks where focus goes on the way.
 
 | What | How |
 |---|---|
@@ -529,7 +554,7 @@ Checked by two browser tests rather than by eye. [`e2e/a11y-audit.mjs`](e2e/a11y
 
 The first audit found 3 problems: that contrast issue, an admin table that scrolled sideways on phones but couldn't be reached with the keyboard, and pages without an `h1`. The keyboard test found what axe can't: the focus lost on every seat map refresh.
 
-**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, downloads its calendar event from the ticket and from My bookings (file name, UID, start time in UTC, title, ticket code), checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. [`e2e/waitlist-flow.mjs`](e2e/waitlist-flow.mjs) builds a sold-out show, joins its waitlist in the browser, cancels the booking and waits for the offer to appear on the page with its countdown (and in Mailpit), books it, then gives a second person an offer that they decline. [`e2e/promo-flow.mjs`](e2e/promo-flow.mjs) creates a code on the admin page, has a customer told why a wrong code is refused, apply the real one, book at the discounted price and then lose a second code to someone who booked first (refused at confirm, booked at full price), and checks the uses and discounts on the admin pages. [`e2e/best-seats-flow.mjs`](e2e/best-seats-flow.mjs) lets the app pick 2 seats on a show with an aisle and a recliner row, hears which were picked, asks for recliners, then for more seats together than any row has (told why, nothing held), and gets the next best pair while someone else holds the middle, also with the keyboard only and on a phone. [`e2e/review-flow.mjs`](e2e/review-flow.mjs) books a show that starts a minute later, is told to wait until it has started, then rates it from My bookings (a missing rating is explained, the stars work with the arrow keys), sees the review and the average, watches a second customer's 1-star spam drag the average down until an admin hides it, and edits and deletes the review, also on a phone. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) and [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) check accessibility (see [Accessibility](#accessibility)). All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
+**Browser tests:** [`e2e/booking-flow.mjs`](e2e/booking-flow.mjs) drives headless Chromium (Playwright) through the whole journey: browse films → a showtime on the film's page → pick 2 seats → log in → hold → a second visitor sees the seats as held → confirm → my bookings → cancel, plus a phone-sized layout check. With `MAILPIT_URL` set it also registers a new account, reads the verification email from Mailpit and opens its link. [`e2e/admin-flow.mjs`](e2e/admin-flow.mjs) checks that a customer can't open the admin pages, then as an admin creates a venue, show and seat map, sees a customer's booking arrive, reschedules the show (and with Mailpit checks the customer's email) and cancels it. [`e2e/password-flow.mjs`](e2e/password-flow.mjs) goes through "Forgot password?", the emailed link, logging in with the new password and changing it on the account page, and fails on any Content-Security-Policy violation. [`e2e/ticket-flow.mjs`](e2e/ticket-flow.mjs) opens a customer's ticket, downloads its calendar event from the ticket and from My bookings (file name, UID, start time in UTC, title, ticket code), checks it in on the admin check-in page, and makes sure a second scan and a forged code are refused. [`e2e/waitlist-flow.mjs`](e2e/waitlist-flow.mjs) builds a sold-out show, joins its waitlist in the browser, cancels the booking and waits for the offer to appear on the page with its countdown (and in Mailpit), books it, then gives a second person an offer that they decline. [`e2e/promo-flow.mjs`](e2e/promo-flow.mjs) creates a code on the admin page, has a customer told why a wrong code is refused, apply the real one, book at the discounted price and then lose a second code to someone who booked first (refused at confirm, booked at full price), and checks the uses and discounts on the admin pages. [`e2e/best-seats-flow.mjs`](e2e/best-seats-flow.mjs) lets the app pick 2 seats on a show with an aisle and a recliner row, hears which were picked, asks for recliners, then for more seats together than any row has (told why, nothing held), and gets the next best pair while someone else holds the middle, also with the keyboard only and on a phone. [`e2e/film-flow.mjs`](e2e/film-flow.mjs) creates a film on the admin Films page and two showtimes with the New show form, finds the film on the home page (its next showtime and cheapest seat), narrows it to a city, picks a showtime on the film's page and reaches the seat map, then renames the film and sees its shows follow. [`e2e/review-flow.mjs`](e2e/review-flow.mjs) books a show that starts a minute later, is told to wait until it has started, then rates it from My bookings (a missing rating is explained, the stars work with the arrow keys), sees the review and the average, watches a second customer's 1-star spam drag the average down until an admin hides it, and edits and deletes the review, also on a phone. [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) and [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) check accessibility (see [Accessibility](#accessibility)). All of them fail on any JavaScript error. They caught real bugs before release: `crypto.randomUUID()` only exists on HTTPS/localhost (fixed with a fallback), the seat map was cut off on phones, the venue dropdown had no usable accessible name, and a slow page could draw over the one clicked after it (pages now render in order).
 
 ```powershell
 # app running on port 8080 with the demo data (scripts/seed-demo.ps1)
@@ -676,6 +701,7 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | HTTP (MockMvc + Testcontainers) | `RedisDownTest` | With Redis unreachable, cached reads fall back to the database, login still works, and a customer can still cancel (the waitlist offer waits) |
 | Unit (milliseconds) | `ReviewRulesTest` | Who may review and from when, the text as stored (trimmed, line breaks, no control characters), the average to one decimal, "Asha K." |
 | HTTP (MockMvc + Testcontainers) | `ReviewApiTest` | No booking, a cancelled one and a show not started are refused; the average on the show and in its cache after every write, edit and delete; sorting, short names, bad input; hiding and showing again; 6 saves by one person and 8 people at once |
+| HTTP (MockMvc + Testcontainers) | `FilmApiTest` | Films created and edited (unique titles, validation, admin only), shows joining by id or title, 6 shows created at once making one film, a rename reaching cached shows; now showing by city and title (wildcards as text), soonest first, next three, cheapest seat; reviews across screenings once per person; a show with bookings keeping its film; the runtime in the calendar event and the review email |
 | HTTP (MockMvc + Testcontainers) | `ReviewRequestTest` | "How was it?" only for shows that are over and within 7 days, once per person (two bookings, an existing review), not for cancelled bookings or shows, never twice, never to the demo account |
 | Unit (milliseconds) | `PromoCodeTest` | Percentages rounded to the paisa, caps, at least ₹1 left to pay, every reason a code is refused, uses stopping at the limit and given back |
 | HTTP (MockMvc + Testcontainers) | `PromoCodeApiTest` | Creating codes (capitals, duplicates, invalid combinations, admin only), the price preview and its reasons, switching off and on, the preview's rate limit |
@@ -686,16 +712,16 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V21) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V22) applies to an empty database |
 | HTTP (MockMvc + Testcontainers) | `BusinessMetricsTest` | Seats by category, booking value, cancellations by customer or show, counters at 0 from startup, nothing counted for a rolled-back transaction, outbox gauges |
 | HTTP (MockMvc + Testcontainers) | `LoginConnectionTest` | The password check runs with no transaction open, so a login doesn't hold a database connection during BCrypt |
 | Integration (real HTTP + fake OTLP gateway) | `OtlpExportTest` | Metrics and traces arrive gzipped with the auth header and resource attributes; the request's span carries its request id, its database queries are spans with `?` instead of parameter values, health probes make none, the log line has the trace id |
 | Browser (Playwright, in CI) | [`e2e/start-page.mjs`](e2e/start-page.mjs) | The wake-up start page against a fake app that is awake (straight through), asleep (wait screen, progress, live status), deploying (Render error pages don't count) and down (clear failure, focused retry); phone width, dark mode, no JavaScript errors or CSP violations |
-| Browser (Playwright + axe-core) | [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) | No WCAG 2.2 AA violations on 26 pages, phone and desktop, light and dark, and no sideways scrolling at 320 px wide (130 checks) |
+| Browser (Playwright + axe-core) | [`e2e/a11y-audit.mjs`](e2e/a11y-audit.mjs) | No WCAG 2.2 AA violations on 29 pages, phone and desktop, light and dark, and no sideways scrolling at 320 px wide (145 checks) |
 | Browser (Playwright) | [`e2e/keyboard-flow.mjs`](e2e/keyboard-flow.mjs) | Booking with the keyboard only: skip link, focus after page changes, arrow keys in the seat map, focus kept through the 10 s refresh and the login dialog, the hold announced, reduced motion, forced colours |
 | Rules (`promtool`, in CI) | [`monitoring/alerts.test.yaml`](monitoring/alerts.test.yaml) | Each alert fires on a bad case and stays quiet on a normal one, including the first event after a restart |
 
-The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **94% of lines, 81% of branches** across 215 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
+The integration tests need Docker and never touch your dev database. GitHub Actions runs all of them on every push, publishes a coverage table on the run's summary page (JaCoCo: **94% of lines, 81% of branches** across 220 tests), uploads the HTML coverage report, then builds the Docker image. Locally, `.\mvnw verify` writes the report to `target/site/jacoco/index.html`.
 
 ## Roadmap
 
@@ -723,7 +749,8 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 22:** accessibility: an axe-core audit of 20 pages (WCAG 2.2 AA, both themes, phone, desktop and 320 px), a browser test that books with the keyboard only, a seat map with arrow keys whose focus survives the live refresh, announcements for holds and offers, reduced motion and Windows High Contrast
 - [x] **Week 23:** promo codes: percentage (with a cap) or fixed discounts with a minimum total, one show, an end date and limits in total and per person, never overrun by parallel bookings (a row lock; the race tests fail without it); with Razorpay the use is reserved for the order and given back on expiry, refund or cancel; a code field at checkout, an admin Promo codes page, and a browser test
 - [x] **Week 24:** best seats in one click: the best block of seats together (middle of the row, about two thirds back, never across an aisle), held in the same call and picked again when someone was faster (8 people at once never share a seat); calendar events (`.ics`) in the confirmation email, an updated one when a show moves, and **Add to calendar** on the ticket; outbox emails with several attachments, migrated without losing one during a deploy
-- [x] **Week 25:** reviews and ratings by people who went: one per person per show, an average kept on the show by atomic updates (exact under parallel saves; the lock's test fails without it) and cleared from the cache after commit, a "How was it?" email after the show, an admin Reviews page to hide spam, a 5-star radio group that works with the keyboard, and a browser test; the attachment columns that V19 replaced dropped in V21
+- [x] **Week 25:** reviews and ratings by people who went: an average kept by atomic updates (exact under parallel saves; the lock's test fails without it) and cleared from the cache after commit, a "How was it?" email after the show, an admin Reviews page to hide spam, a 5-star radio group that works with the keyboard, and a browser test; the attachment columns that V19 replaced dropped in V21
+- [x] **Week 26:** films: a film groups its screenings (title, runtime, language, certificate, synopsis), the home page lists films with their rating, next showtime and cheapest seat, a film page with showtimes by day, reviews once per person per film across its screenings, the runtime in the calendar event and the review email, an admin Films page; existing shows and ratings moved over by V22
 
 ## Author
 

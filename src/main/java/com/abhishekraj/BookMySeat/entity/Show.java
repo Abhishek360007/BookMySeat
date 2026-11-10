@@ -24,8 +24,13 @@ public class Show {
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
 
+	// The film's title, kept on the show for everything that reads it (emails, tickets, bookings)
 	@Column(nullable = false, length = 150)
 	private String title;
+
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "film_id")
+	private Film film;
 
 	@Column(nullable = false)
 	private Instant startTime;
@@ -54,14 +59,6 @@ public class Show {
 	@Column(name = "aisle_after", length = 50)
 	private String aisleAfter; // e.g. "4,8": aisles after seat 4 and seat 8 of every row
 
-	// Sum and count of the visible review ratings. Only ever changed by ShowRepository.adjustRating (an atomic
-	// "+ delta" UPDATE), never written from here: saving an edited show can't overwrite a review counted meanwhile
-	@Column(nullable = false, insertable = false, updatable = false)
-	private int ratingSum;
-
-	@Column(nullable = false, insertable = false, updatable = false)
-	private int ratingCount;
-
 	/** What one seat of this category costs now (bookings keep the total they were made with). */
 	public BigDecimal priceOf(SeatCategory category) {
 		return category == SeatCategory.REGULAR ? price : categoryPrices.getOrDefault(category, price);
@@ -85,6 +82,11 @@ public class Show {
 			return List.of();
 		}
 		return Arrays.stream(aisleAfter.split(",")).map(String::trim).map(Integer::valueOf).sorted().toList();
+	}
+
+	/** When the show is over: its start plus the film's runtime. */
+	public Instant endTime() {
+		return startTime.plus(film.runtime());
 	}
 
 	public boolean isCancelled() {

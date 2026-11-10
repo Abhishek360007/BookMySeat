@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.service;
 
+import com.abhishekraj.BookMySeat.entity.Film;
 import com.abhishekraj.BookMySeat.dto.BookingResponse;
 import com.abhishekraj.BookMySeat.dto.ConfirmBookingRequest;
 import com.abhishekraj.BookMySeat.entity.Booking;
@@ -118,6 +119,7 @@ class BookingServiceTest {
 		Show show = new Show();
 		show.setId(1L);
 		show.setTitle("Test Show");
+		show.setFilm(new Film("Test Show", Film.DEFAULT_RUNTIME_MINUTES, Instant.EPOCH));
 		show.setStartTime(Instant.parse(startTime));
 		show.setPrice(new BigDecimal("250.00"));
 		show.setVenue(venue);

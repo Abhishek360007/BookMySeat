@@ -14,22 +14,41 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificationExecutor<Show> {
 
 	@Override
-	@EntityGraph(attributePaths = "venue")
+	@EntityGraph(attributePaths = {"venue", "film"})
 	List<Show> findAll();
 
-	@EntityGraph(attributePaths = "venue")
+	@EntityGraph(attributePaths = {"venue", "film"})
 	List<Show> findByVenueId(Long venueId);
 
-	// Search: the venue is a to-one, so fetching it with paging is safe (one query plus a count)
+	// Search: the venue and film are to-ones, so fetching them with paging is safe (one query plus a count)
 	@Override
-	@EntityGraph(attributePaths = "venue")
+	@EntityGraph(attributePaths = {"venue", "film"})
 	Page<Show> findAll(Specification<Show> spec, Pageable pageable);
+
+	// Films' scheduled shows from `now` on, soonest first, with their venues and prices
+	// (one query: the prices are a small map per show)
+	@Query("""
+			select distinct s from Show s join fetch s.venue v left join fetch s.categoryPrices
+			where s.film.id in :filmIds and s.status = com.abhishekraj.BookMySeat.entity.ShowStatus.SCHEDULED
+			  and s.startTime >= :now
+			order by s.startTime, s.id""")
+	List<Show> findUpcomingOfFilms(Collection<Long> filmIds, Instant now);
+
+	// Shows per film, for the admin Films page: one grouped query for the whole page
+	@Query("select s.film.id, count(s) from Show s where s.film.id in :filmIds group by s.film.id")
+	List<Object[]> countByFilmIds(Collection<Long> filmIds);
+
+	// A film renamed: its shows carry the new title
+	@Modifying
+	@Query("update Show s set s.title = :title where s.film.id = :filmId")
+	int retitleFilm(Long filmId, String title);
 
 	boolean existsByVenueId(Long venueId);
 
@@ -43,12 +62,6 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 	@Lock(LockModeType.PESSIMISTIC_READ)
 	@Query("select s from Show s where s.id = :id")
 	Optional<Show> findForBookingById(Long id);
-
-	// Atomic, so two reviews saved at once both count. The CHECK on shows refuses a count that would go wrong.
-	@Modifying
-	@Query(value = "UPDATE shows SET rating_sum = rating_sum + :sumDelta, rating_count = rating_count + :countDelta WHERE id = :showId",
-			nativeQuery = true)
-	int adjustRating(Long showId, int sumDelta, int countDelta);
 
 	// FOR UPDATE: waits for confirms in progress to commit, and blocks new ones until the cancel commits
 	@Lock(LockModeType.PESSIMISTIC_WRITE)

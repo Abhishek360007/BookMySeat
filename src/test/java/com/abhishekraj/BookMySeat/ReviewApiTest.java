@@ -89,6 +89,8 @@ class ReviewApiTest {
 		bookingRepository.deleteAll();
 		seatRepository.deleteAll();
 		showRepository.deleteAll();
+		// Films outlive their shows; these tests count ratings, so start each one from fresh films
+		jdbc.update("delete from films f where not exists (select 1 from shows s where s.film_id = f.id)");
 		venueRepository.deleteAll();
 		userRepository.deleteAll(userRepository.findAll().stream().filter(u -> u.getRole() != Role.ADMIN).toList());
 		redis.delete(redis.keys("hold:*"));
@@ -102,7 +104,7 @@ class ReviewApiTest {
 
 		review(booked, 5, "Loved it").andExpect(status().isConflict())
 				.andExpect(jsonPath("$.reason").value("NOT_STARTED"))
-				.andExpect(jsonPath("$.detail").value("You can review this show once it has started"));
+				.andExpect(jsonPath("$.detail").value("You can review this film once your screening has started"));
 		showStarted();
 		review(other, 5, null).andExpect(status().isConflict()).andExpect(jsonPath("$.reason").value("NO_BOOKING"));
 		mvc.perform(put("/api/shows/" + showId + "/reviews/me").contentType(MediaType.APPLICATION_JSON)
@@ -152,7 +154,7 @@ class ReviewApiTest {
 		show().andExpect(jsonPath("$.ratingCount").value(1)).andExpect(jsonPath("$.ratingAverage").value(3.0));
 		mvc.perform(delete("/api/shows/" + showId + "/reviews/me").header("Authorization", "Bearer " + asha))
 				.andExpect(status().isNotFound());
-		assertThat(jdbc.queryForObject("select rating_sum from shows where id = ?", Integer.class, showId)).isEqualTo(3);
+		assertThat(jdbc.queryForObject("select rating_sum from films where id = (select film_id from shows where id = ?)", Integer.class, showId)).isEqualTo(3);
 	}
 
 	@Test
@@ -192,7 +194,7 @@ class ReviewApiTest {
 
 		mvc.perform(get("/api/reviews/me").header("Authorization", "Bearer " + ravi))
 				.andExpect(jsonPath("$[*].showId", contains((int) showId)))
-				.andExpect(jsonPath("$[0].showTitle").value("Review Show"))
+				.andExpect(jsonPath("$[0].filmTitle").value("Review Show"))
 				.andExpect(jsonPath("$[0].text").value("Superb"));
 	}
 
@@ -250,8 +252,8 @@ class ReviewApiTest {
 		int myRating = JsonPath.read(mvc.perform(get("/api/reviews/me").header("Authorization", "Bearer " + me))
 				.andReturn().getResponse().getContentAsString(), "$[0].rating");
 		int expectedSum = myRating + (1 + 2 + 3 + 4 + 5 + 1 + 2 + 3);
-		assertThat(jdbc.queryForObject("select rating_count from shows where id = ?", Integer.class, showId)).isEqualTo(9);
-		assertThat(jdbc.queryForObject("select rating_sum from shows where id = ?", Integer.class, showId)).isEqualTo(expectedSum);
+		assertThat(jdbc.queryForObject("select rating_count from films where id = (select film_id from shows where id = ?)", Integer.class, showId)).isEqualTo(9);
+		assertThat(jdbc.queryForObject("select rating_sum from films where id = (select film_id from shows where id = ?)", Integer.class, showId)).isEqualTo(expectedSum);
 		assertThat(jdbc.queryForObject("select sum(rating) from reviews where show_id = ?", Integer.class, showId))
 				.isEqualTo(expectedSum);
 	}

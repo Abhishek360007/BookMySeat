@@ -3,6 +3,7 @@ package com.abhishekraj.BookMySeat;
 import com.abhishekraj.BookMySeat.config.CacheConfig;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
+import com.abhishekraj.BookMySeat.repository.FilmRepository;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -41,6 +42,7 @@ class ShowSearchApiTest {
 
 	@Autowired MockMvc mvc;
 	@Autowired ShowRepository showRepository;
+	@Autowired FilmRepository filmRepository;
 	@Autowired VenueRepository venueRepository;
 	@Autowired CacheManager cacheManager;
 
@@ -136,6 +138,7 @@ class ShowSearchApiTest {
 	private void show(String title, Venue venue, int daysFromNow) {
 		Show show = new Show();
 		show.setTitle(title);
+		show.setFilm(TestFilms.named(filmRepository, title));
 		show.setVenue(venue);
 		show.setStartTime(NOW.plus(daysFromNow, ChronoUnit.DAYS));
 		show.setPrice(new BigDecimal("250.00"));

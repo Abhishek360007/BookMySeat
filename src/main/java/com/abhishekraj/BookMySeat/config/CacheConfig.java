@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.config;
 
+import com.abhishekraj.BookMySeat.dto.FilmCardResponse;
 import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
 import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
@@ -29,6 +30,7 @@ public class CacheConfig implements CachingConfigurer {
 
 	public static final String SHOW = "show";
 	public static final String SHOW_SEARCH = "showSearch";
+	public static final String FILM_SEARCH = "filmSearch";
 
 	// A cache only makes reads faster; if Redis is slow or down, log it and read from the database
 	// instead of failing the request (the default handler would turn it into a 500)
@@ -41,6 +43,7 @@ public class CacheConfig implements CachingConfigurer {
 	public RedisCacheManagerBuilderCustomizer redisCaches(RedisConnectionFactory connectionFactory, JsonMapper jsonMapper) {
 		JavaType showType = jsonMapper.constructType(ShowResponse.class);
 		JavaType searchType = jsonMapper.getTypeFactory().constructParametricType(PageResponse.class, ShowResponse.class);
+		JavaType filmSearchType = jsonMapper.getTypeFactory().constructParametricType(PageResponse.class, FilmCardResponse.class);
 
 		return builder -> builder
 				// SCAN instead of KEYS when clearing a whole cache (KEYS blocks Redis on a big keyspace).
@@ -50,7 +53,9 @@ public class CacheConfig implements CachingConfigurer {
 						writer -> writer.batchStrategy(BatchStrategies.scan(100)).immediateWrites()))
 				.withCacheConfiguration(SHOW, cache(jsonMapper, showType, Duration.ofMinutes(10)))
 				// Short TTL: by default search means "upcoming from now", and shows drop out as they start
-				.withCacheConfiguration(SHOW_SEARCH, cache(jsonMapper, searchType, Duration.ofSeconds(60)));
+				.withCacheConfiguration(SHOW_SEARCH, cache(jsonMapper, searchType, Duration.ofSeconds(60)))
+				// The home page: films now showing, same short TTL for the same reason
+				.withCacheConfiguration(FILM_SEARCH, cache(jsonMapper, filmSearchType, Duration.ofSeconds(60)));
 	}
 
 	// Typed JSON (no class names stored in Redis), so cached data can only ever turn back into the expected DTO

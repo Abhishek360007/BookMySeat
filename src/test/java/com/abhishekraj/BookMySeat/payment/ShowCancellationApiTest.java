@@ -255,10 +255,13 @@ class ShowCancellationApiTest {
 		assertThat(bookingRepository.findAll()).singleElement()
 				.satisfies(b -> assertThat(b.getTotalAmount()).isEqualByComparingTo("250.00"));
 
-		// Same time again (only the title changes): no new emails
-		adminCall(put("/api/shows/" + showId), showJson("Cancel Show (IMAX)", later, "400.00", venueId))
+		// Same time again (only the price changes): no new emails
+		adminCall(put("/api/shows/" + showId), showJson("Cancel Show", later, "450.00", venueId))
 				.andExpect(status().isOk());
 		assertThat(emails("SHOW_RESCHEDULED")).hasSize(1);
+		// A new title is another film, which a booked show can't move to (renaming happens on the film)
+		adminCall(put("/api/shows/" + showId), showJson("Cancel Show (IMAX)", later, "450.00", venueId))
+				.andExpect(status().isConflict());
 	}
 
 	@Test

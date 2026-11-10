@@ -12,7 +12,7 @@ import java.util.List;
 
 public record BookingResponse(Long id, Long showId, String showTitle, String venueName,
 		Instant showStartTime, BookingStatus status, List<String> seats, BigDecimal totalAmount,
-		Instant createdAt, Instant cancelledAt, BigDecimal discountAmount, String promoCode) {
+		Instant createdAt, Instant cancelledAt, BigDecimal discountAmount, String promoCode, Long filmId) {
 
 	public static BookingResponse from(Booking booking) {
 		Show show = booking.getShow();
@@ -21,6 +21,7 @@ public record BookingResponse(Long id, Long showId, String showTitle, String ven
 				.map(Seat::getSeatNumber).toList();
 		return new BookingResponse(booking.getId(), show.getId(), show.getTitle(), show.getVenue().getName(),
 				show.getStartTime(), booking.getStatus(), seatNumbers, booking.getTotalAmount(),
-				booking.getCreatedAt(), booking.getCancelledAt(), booking.getDiscountAmount(), booking.getPromoCode());
+				booking.getCreatedAt(), booking.getCancelledAt(), booking.getDiscountAmount(), booking.getPromoCode(),
+				show.getFilm().getId());
 	}
 }
