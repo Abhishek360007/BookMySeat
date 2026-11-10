@@ -1,6 +1,7 @@
 package com.abhishekraj.BookMySeat.notification;
 
 import com.abhishekraj.BookMySeat.TestcontainersConfig;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.sql.DataSource;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;
@@ -54,6 +56,7 @@ class EmailOutboxTest {
 	@Autowired FakeEmailSender sender;
 	@Autowired TransactionTemplate tx;
 	@Autowired JdbcTemplate jdbc;
+	@Autowired DataSource dataSource;
 
 	@BeforeEach
 	void setUp() {
@@ -119,21 +122,35 @@ class EmailOutboxTest {
 	}
 
 	@Test
-	void emailQueuedByThePreviousVersion_stillGoesOutWithItsAttachment() {
-		// During a deploy the old version still runs for a moment and writes its one attachment the V13 way
-		jdbc.update("""
-				insert into email_outbox (kind, recipient, subject, body_text, body_html, status, attempts,
-					next_attempt_at, created_at, attachment_name, attachment_type, attachment_content)
-				values ('BOOKING_CONFIRMED', 'old@example.com', 'Old', 'x', '<p>x</p>', 'PENDING', 0,
-					now() - interval '1 minute', now() - interval '1 minute',
-					'ticket-9.png', 'image/png', ?)""", (Object) new byte[] {9});
+	void v21_movesAnAttachmentLeftInTheOldColumns_thenDropsThem() {
+		// A schema of its own, migrated up to V20, with an email queued the V13 way next to one queued the V19 way
+		String schema = "v21_check";
+		try {
+			Flyway.configure().dataSource(dataSource).schemas(schema).target("20").load().migrate();
+			jdbc.update("""
+					insert into %1$s.email_outbox (id, kind, recipient, subject, body_text, body_html, status, attempts,
+						next_attempt_at, created_at, attachment_name, attachment_type, attachment_content)
+					values (1, 'BOOKING_CONFIRMED', 'old@example.com', 'Old', 'x', '<p>x</p>', 'PENDING', 0, now(), now(),
+						'ticket-9.png', 'image/png', ?),
+						(2, 'BOOKING_CONFIRMED', 'new@example.com', 'New', 'x', '<p>x</p>', 'PENDING', 0, now(), now(),
+						null, null, null)""".formatted(schema), (Object) new byte[] {9});
+			jdbc.update("insert into " + schema + ".email_outbox_attachment values (2, 0, 'ticket-8.png', 'image/png', ?)",
+					(Object) new byte[] {8});
 
-		assertThat(dispatcher.deliverDue()).isEqualTo(1);
-		assertThat(sender.sent).singleElement().satisfies(sent -> assertThat(sent.attachments()).singleElement()
-				.satisfies(a -> {
-					assertThat(a.filename()).isEqualTo("ticket-9.png");
-					assertThat(a.content()).containsExactly(9);
-				}));
+			Flyway.configure().dataSource(dataSource).schemas(schema).load().migrate();
+
+			assertThat(jdbc.queryForObject("select count(*) from " + schema + ".email_outbox_attachment", Integer.class))
+					.isEqualTo(2);
+			assertThat(jdbc.queryForMap("select idx, filename, content from " + schema
+					+ ".email_outbox_attachment where email_id = 1"))
+					.containsEntry("idx", 0).containsEntry("filename", "ticket-9.png");
+			assertThat(jdbc.queryForObject("""
+					select count(*) from information_schema.columns
+					where table_schema = ? and table_name = 'email_outbox' and column_name like 'attachment%'""",
+					Integer.class, schema)).isZero();
+		} finally {
+			jdbc.execute("drop schema if exists " + schema + " cascade");
+		}
 	}
 
 	@Test

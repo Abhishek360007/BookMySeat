@@ -7,6 +7,7 @@ import com.abhishekraj.BookMySeat.repository.BookingRepository;
 import com.abhishekraj.BookMySeat.repository.PaymentRepository;
 import com.abhishekraj.BookMySeat.service.BookingCancelledEvent;
 import com.abhishekraj.BookMySeat.service.BookingConfirmedEvent;
+import com.abhishekraj.BookMySeat.service.ReviewRequestedEvent;
 import com.abhishekraj.BookMySeat.service.ShowRescheduledEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
@@ -45,6 +46,12 @@ public class BookingEmails {
 	public void onRescheduled(ShowRescheduledEvent event) {
 		bookingRepository.findAllByShowIdAndStatus(event.showId(), BookingStatus.CONFIRMED).forEach(booking ->
 				outbox.enqueue("SHOW_RESCHEDULED", templates.showRescheduled(booking, event.previousStartTime())));
+	}
+
+	@EventListener
+	public void onReviewRequested(ReviewRequestedEvent event) {
+		bookingRepository.findById(event.bookingId())
+				.ifPresent(booking -> outbox.enqueue("REVIEW_REQUEST", templates.reviewRequest(booking)));
 	}
 
 	@EventListener

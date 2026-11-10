@@ -157,6 +157,14 @@ public class GlobalExceptionHandler {
 		return problem;
 	}
 
+	@ExceptionHandler(ReviewRefusedException.class)
+	public ProblemDetail handleReviewRefused(ReviewRefusedException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setTitle("Can't review this show");
+		problem.setProperty("reason", ex.getReason().name());
+		return problem;
+	}
+
 	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
 	public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Invalid value for parameter '" + ex.getName() + "'");

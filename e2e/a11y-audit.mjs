@@ -1,7 +1,8 @@
 // Accessibility audit of the web app with axe-core (WCAG 2.2 A and AA rules plus axe's best practices): every page,
 // on a desktop and a phone screen, in the light and the dark theme. Fails on any violation and prints each one with
 // the elements it found it on.
-// Builds its own data through the API (a show, a sold-out show, a booking), so it needs an admin account
+// Builds its own data through the API (a show, a sold-out show, one that starts 45 s into the run, bookings and a
+// review), so it needs an admin account
 // (ADMIN_EMAIL / ADMIN_PASSWORD). Logs in 3 times. Run with:
 //   docker run --rm -v "${PWD}/e2e:/e2e" -e BASE_URL=http://host.docker.internal:8080 -e ADMIN_EMAIL=... -e ADMIN_PASSWORD=... \
 //     mcr.microsoft.com/playwright:v1.64.1-noble sh -c "npm i --no-save --prefix /tmp/pw playwright@1.64.1 \
@@ -41,6 +42,19 @@ async function newShow(admin, venueId, title, rows, seatsPerRow, days) {
 	const show = await rest('/api/shows', { method: 'POST', token: admin, body: { title, startTime, price: 250, venueId } });
 	await rest(`/api/shows/${show.id}/seats`, { method: 'POST', token: admin, body: { rows, seatsPerRow } });
 	return show;
+}
+
+/** A show starting `seconds` from now: booked now, reviewable once it has started. */
+async function showStartingIn(admin, venueId, title, seconds) {
+	const startTime = new Date(Date.now() + seconds * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+	const show = await rest('/api/shows', { method: 'POST', token: admin, body: { title, startTime, price: 250, venueId } });
+	await rest(`/api/shows/${show.id}/seats`, { method: 'POST', token: admin, body: { rows: 1, seatsPerRow: 4 } });
+	return show;
+}
+
+async function untilStarted(show) {
+	const wait = new Date(show.startTime) - Date.now() + 1500;
+	if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 }
 
 async function book(token, showId, seatIds) {
@@ -111,6 +125,9 @@ try {
 	const seats = await rest(`/api/shows/${show.id}/seats`);
 	const booking = await book(user, show.id, [seats[0].id, seats[1].id]);
 	await book(user, soldOut.id, (await rest(`/api/shows/${soldOut.id}/seats`)).map((s) => s.id));
+	const started = await showStartingIn(adminToken, venue.id, `A11y Audit Reviewed ${RUN}`, 45);
+	shows.push(started);
+	await book(user, started.id, [(await rest(`/api/shows/${started.id}/seats`))[0].id]);
 
 	const context = await browser.newContext();
 	const page = await context.newPage();
@@ -157,6 +174,14 @@ try {
 	await page.goto(`${BASE}/#/show/${soldOut.id}`);
 	await page.getByRole('button', { name: 'Join waitlist' }).click();
 	await audit(page, 'on the waitlist', () => page.locator('#waitlist-status').waitFor());
+	await page.goto(`${BASE}/#/review/${show.id}`);
+	await audit(page, 'review before the show', () => page.getByText('once it has started').waitFor());
+	await untilStarted(started);
+	await rest(`/api/shows/${started.id}/reviews/me`, { method: 'PUT', token: user, body: { rating: 4, text: 'Great sound.\nComfy seats.' } });
+	await page.goto(`${BASE}/#/review/${started.id}`);
+	await audit(page, 'review form', () => page.locator('#review-delete:not([hidden])').waitFor());
+	await page.goto(`${BASE}/#/show/${started.id}`);
+	await audit(page, 'show with reviews', () => page.locator('.review').first().waitFor());
 	await page.goto(`${BASE}/#/bookings`);
 	await audit(page, 'my bookings', () => page.locator('#waitlist').waitFor());
 	await page.goto(`${BASE}/#/ticket/${booking.id}`);
@@ -187,6 +212,8 @@ try {
 	await audit(adminPage, 'admin check-in', () => adminPage.locator('form').first().waitFor());
 	await adminPage.goto(`${BASE}/#/admin/promo-codes`);
 	await audit(adminPage, 'admin promo codes', () => adminPage.locator('#new-code').waitFor());
+	await adminPage.goto(`${BASE}/#/admin/reviews`);
+	await audit(adminPage, 'admin reviews', () => adminPage.locator('[data-review]').first().waitFor());
 	await adminContext.close();
 } catch (error) {
 	failed = `step failed: ${error.message.split('\n')[0]}`;

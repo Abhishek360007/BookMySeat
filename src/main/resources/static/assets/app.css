@@ -15,6 +15,7 @@
 	--ok: #13795b;
 	--danger: #c0392b;
 	--radius: 12px;
+	--star: #b45309;
 	color-scheme: light;
 }
 
@@ -35,6 +36,7 @@
 		--seat-booked-text: #5c5f70;
 		--ok: #4cc79a;
 		--danger: #ff7b6e;
+		--star: #fbbf24;
 		color-scheme: dark;
 	}
 }
@@ -190,6 +192,27 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .ticket .qr { display: block; margin: 12px auto; width: 260px; height: 260px; background: #fff; padding: 8px; border-radius: 8px; image-rendering: pixelated; }
 .ticket .seats { font-size: 1.1rem; }
 .ticket code { word-break: break-all; }
+
+/* Reviews */
+.rating { font-size: .9rem; }
+.rating .star, .stars-read { color: var(--star); }
+.reviews { margin-top: 24px; }
+.review-list { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 10px; }
+.review { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.review:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.review-text { white-space: pre-line; overflow-wrap: anywhere; margin: .4rem 0 0; }
+.stars-read { letter-spacing: .05em; }
+.review-form { display: grid; gap: .6rem; max-width: 560px; }
+.review-form textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .6rem; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); resize: vertical; }
+.star-input { border: 0; padding: 0; margin: 0; }
+.star-input legend { font-weight: 600; margin-bottom: .3rem; }
+.star-input .row { position: relative; }
+.star-input input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.star-input label { font-size: 2rem; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 6px; }
+a.btn[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+.star-input label.on { color: var(--star); }
+.star-input input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .ticket .ticket-actions { justify-content: center; margin-top: 8px; }
 
 /* Admin */
@@ -265,6 +288,9 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Forced colours (Windows High Contrast) replace backgrounds, which is how seat states differ: use system colours and
    border styles instead. Selected = highlighted, held for you = thick border, held = dotted, booked = dashed grey */
 @media (forced-colors: active) {
+	/* Stars: the chosen ones in Highlight, the rest in GrayText (colours alone would all turn CanvasText) */
+	.star-input label { forced-color-adjust: none; color: GrayText; }
+	.star-input label.on, .rating .star, .stars-read { forced-color-adjust: none; color: Highlight; }
 	.seat, .legend i { forced-color-adjust: none; background: Canvas; color: CanvasText; border: 1px solid CanvasText; box-shadow: none; }
 	.seat.selected, .legend .l-sel { background: Highlight; color: HighlightText; border-color: Highlight; }
 	.seat.mine { border: 3px solid Highlight; }

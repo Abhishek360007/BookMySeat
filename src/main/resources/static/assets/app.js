@@ -20,6 +20,21 @@ const CATEGORIES = ['REGULAR', 'PREMIUM', 'RECLINER'];
 const CATEGORY_NAMES = { REGULAR: 'regular', PREMIUM: 'premium', RECLINER: 'recliner' };
 
 /** "₹250" or, when seat categories cost different amounts, "from ₹250" */
+const day = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' });
+const RATING_WORDS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
+
+/** "★★★★☆" for the eyes; screen readers get the words from the text next to it instead. */
+function starsText(rating) {
+	return '★'.repeat(rating) + '☆'.repeat(5 - rating);
+}
+
+/** "★ 4.3 · 12 reviews", read as "Rated 4.3 out of 5, 12 reviews"; nothing while a show has no reviews. */
+function ratingSummary(show) {
+	if (!show.ratingCount) return '';
+	const average = Number(show.ratingAverage).toFixed(1);
+	return `<span class="rating"><span class="star" aria-hidden="true">★</span> <span aria-hidden="true">${esc(average)}</span><span class="sr-only">Rated ${esc(average)} out of 5,</span> · ${show.ratingCount} review${show.ratingCount > 1 ? 's' : ''}</span>`;
+}
+
 function priceLabel(show) {
 	const prices = Object.values(show.prices ?? {}).map(Number);
 	const lowest = prices.length ? Math.min(...prices) : Number(show.price);
@@ -323,6 +338,7 @@ async function renderShow(showId) {
 		<a href="#/" class="small">← All shows</a>
 		<h1>${esc(show.title)}</h1>
 		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · <span id="seat-prices"></span></p>
+		${show.ratingCount ? `<p>${ratingSummary(show)}</p>` : ''}
 		<div class="card">
 			<div class="screen">SCREEN</div>
 			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
@@ -334,7 +350,13 @@ async function renderShow(showId) {
 			<div class="legend" id="category-legend"></div>
 		</div>
 		<div class="card summary" id="summary"></div>
-		${testModeNote()}`;
+		${testModeNote()}
+		<section class="reviews" aria-labelledby="reviews-h">
+			<div class="row spread"><h2 id="reviews-h">Reviews</h2>
+				${new Date(show.startTime) <= new Date() ? `<a class="btn btn-ghost" href="#/review/${esc(show.id)}">Rate this show</a>` : ''}</div>
+			<div id="reviews"><p class="muted">Loading reviews…</p></div>
+		</section>`;
+	renderShowReviews(show);
 
 	const rows = () => {
 		const byRow = new Map();
@@ -781,10 +803,19 @@ async function renderBookings() {
 		location.hash = '#/';
 		return;
 	}
-	const [bookings, waitlist] = await Promise.all([
+	const [bookings, waitlist, reviews] = await Promise.all([
 		api('/api/bookings/me', { auth: true }),
 		api('/api/waitlist/me', { auth: true }).catch(() => []),
+		api('/api/reviews/me', { auth: true }).catch(() => []),
 	]);
+	const reviewOf = new Map(reviews.map((r) => [r.showId, r]));
+	// After the show: no cancelling any more, but a rating (or the one you gave, to change)
+	const afterShow = (b) => {
+		const mine = reviewOf.get(b.showId);
+		return mine
+			? `<a class="btn btn-ghost" href="#/review/${esc(b.showId)}" aria-label="Your rating of ${esc(b.showTitle)}: ${mine.rating} out of 5. Edit it"><span aria-hidden="true">${starsText(mine.rating)} · Edit</span></a>`
+			: `<a class="btn btn-primary" href="#/review/${esc(b.showId)}" aria-label="Rate ${esc(b.showTitle)}">Rate this show</a>`;
+	};
 	const waitlistHtml = waitlist.length === 0 ? '' : `
 		<h2>Waitlist</h2>
 		<div class="bookings" id="waitlist">
@@ -824,7 +855,7 @@ async function renderBookings() {
 					${b.status === 'CONFIRMED' ? `<div class="row">
 						<a class="btn btn-primary" href="#/ticket/${b.id}">Ticket</a>
 						${calendarButton(b.id, b.showTitle)}
-						<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button></div>` : ''}
+						${new Date(b.showStartTime) <= new Date() ? afterShow(b) : `<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button>`}</div>` : ''}
 				</div>`).join('')}
 		</div>`;
 	bindLeave();
@@ -855,6 +886,167 @@ function bindLeave() {
 			}
 		};
 	});
+}
+
+/** The show page's reviews: newest or highest rated first, 10 at a time with "Show more". */
+function renderShowReviews(show) {
+	const box = document.getElementById('reviews');
+	let sort = 'newest';
+	let page = 0;
+	const item = (r) => `
+		<li class="review">
+			<div class="row"><span class="stars-read" aria-hidden="true">${starsText(r.rating)}</span>
+				<span class="sr-only">${r.rating} out of 5:</span>
+				<strong>${esc(r.author)}</strong>
+				<span class="muted small">${esc(day.format(new Date(r.createdAt)))}${r.edited ? ' · edited' : ''}</span></div>
+			${r.text ? `<p class="review-text">${esc(r.text)}</p>` : ''}
+		</li>`;
+	const load = async (more) => {
+		let result;
+		try {
+			result = await api(`/api/shows/${show.id}/reviews?sort=${sort}&page=${page}&size=10`);
+		} catch (e) {
+			box.innerHTML = `<p class="muted">Reviews could not be loaded: ${esc(e.message)}</p>`;
+			return;
+		}
+		if (!more) {
+			if (result.totalElements === 0) {
+				box.innerHTML = `<p class="muted">No reviews yet.${new Date(show.startTime) <= new Date() ? ' Been to it? Be the first to rate it.' : ' People who go can rate it after the show.'}</p>`;
+				return;
+			}
+			box.innerHTML = `
+				<div class="row"><label class="small" for="review-sort">Sort</label>
+					<select id="review-sort"><option value="newest">Newest first</option><option value="highest">Highest rated first</option></select></div>
+				<ul class="review-list" id="review-list"></ul>
+				<button class="btn btn-ghost" id="more-reviews" hidden>Show more reviews</button>`;
+			const select = document.getElementById('review-sort');
+			select.value = sort;
+			select.onchange = () => { sort = select.value; page = 0; load(false); };
+			document.getElementById('more-reviews').onclick = () => { page += 1; load(true); };
+		}
+		const list = document.getElementById('review-list');
+		const first = list.children.length;
+		list.insertAdjacentHTML('beforeend', result.content.map(item).join(''));
+		document.getElementById('more-reviews').hidden = page + 1 >= result.totalPages;
+		if (more) {
+			// Keyboard users continue where the new reviews start
+			const next = list.children[first];
+			if (next) { next.tabIndex = -1; next.focus(); }
+			announce(`${result.content.length} more reviews`);
+		}
+	};
+	load(false);
+}
+
+/** #/review/<showId>: rate a show you went to (1 to 5 stars and an optional text), or change or delete your review. */
+async function renderReview(showId) {
+	if (!(await requireLogin())) {
+		location.hash = `#/show/${showId}`;
+		return;
+	}
+	const [show, bookings, reviews] = await Promise.all([
+		api(`/api/shows/${showId}`),
+		api('/api/bookings/me', { auth: true }),
+		api('/api/reviews/me', { auth: true }),
+	]);
+	const back = `<a href="#/show/${esc(show.id)}" class="small">← ${esc(show.title)}</a>`;
+	const booked = bookings.some((b) => b.showId === show.id && b.status === 'CONFIRMED');
+	if (!booked) {
+		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(show.title)}</h1>
+			<p class="muted">Only people with a booking for this show can review it.</p><a class="btn btn-primary" href="#/show/${esc(show.id)}">See the show</a></div>`;
+		return;
+	}
+	if (new Date(show.startTime) > new Date()) {
+		app.innerHTML = `${back}<div class="card empty"><h1>Rate ${esc(show.title)}</h1>
+			<p class="muted">You can rate this show once it has started, from ${esc(when.format(new Date(show.startTime)))}.</p>
+			<a class="btn btn-primary" href="#/bookings">My bookings</a></div>`;
+		return;
+	}
+	let mine = reviews.find((r) => r.showId === show.id) ?? null;
+	app.innerHTML = `
+		${back}
+		<h1 id="review-heading">${mine ? 'Your review of' : 'Rate'} ${esc(show.title)}</h1>
+		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))}</p>
+		<form class="card review-form" id="review-form" novalidate>
+			<fieldset class="star-input">
+				<legend>Your rating</legend>
+				<div class="row">${[1, 2, 3, 4, 5].map((n) => `
+					<input type="radio" name="rating" id="star-${n}" value="${n}">
+					<label for="star-${n}"><span aria-hidden="true">★</span><span class="sr-only">${n} star${n > 1 ? 's' : ''}, ${RATING_WORDS[n].toLowerCase()}</span></label>`).join('')}
+					<span class="muted" id="rating-words" aria-hidden="true"></span></div>
+			</fieldset>
+			<label class="field" for="review-text">Your review <span class="muted">(optional)</span></label>
+			<textarea id="review-text" name="text" rows="5" maxlength="1000" aria-describedby="review-help"></textarea>
+			<p class="muted small" id="review-help">What should the next people deciding know? Shown with your first name and initial. <span id="review-count"></span></p>
+			<p class="muted small" id="review-hidden" hidden>An admin hid this review: others don't see it and it doesn't count in the rating. You can still change it.</p>
+			<p class="form-error" id="review-error" role="alert" hidden></p>
+			<div class="row"><button class="btn btn-primary" id="review-save"></button>
+				<button type="button" class="btn btn-ghost" id="review-delete" hidden>Delete my review</button></div>
+		</form>`;
+
+	const form = document.getElementById('review-form');
+	const error = document.getElementById('review-error');
+	const text = document.getElementById('review-text');
+	const paint = () => {
+		const value = Number(form.rating.value || 0);
+		// Lit stars are filled (★), the others outlined (☆): told apart by shape, not only by colour
+		form.querySelectorAll('.star-input label').forEach((label, i) => {
+			label.classList.toggle('on', i < value);
+			label.querySelector('[aria-hidden]').textContent = i < value ? '★' : '☆';
+		});
+		if (value) error.hidden = true; // "Pick a rating" no longer applies
+		document.getElementById('rating-words').textContent = value ? RATING_WORDS[value] : 'Pick 1 to 5 stars';
+		document.getElementById('review-count').textContent = `${text.value.length} of 1000 characters.`;
+	};
+	const fill = () => {
+		if (mine) {
+			form.querySelector(`#star-${mine.rating}`).checked = true;
+			text.value = mine.text ?? '';
+		}
+		document.getElementById('review-heading').textContent = `${mine ? 'Your review of' : 'Rate'} ${show.title}`;
+		document.getElementById('review-save').textContent = mine ? 'Save changes' : 'Post review';
+		document.getElementById('review-delete').hidden = !mine;
+		document.getElementById('review-hidden').hidden = !mine?.hidden;
+		paint();
+	};
+	form.onchange = paint;
+	text.oninput = paint;
+	fill();
+
+	form.onsubmit = async (event) => {
+		event.preventDefault();
+		error.hidden = true;
+		const rating = Number(form.rating.value || 0);
+		if (!rating) {
+			error.textContent = 'Pick a rating from 1 to 5 stars.';
+			error.hidden = false;
+			form.querySelector('#star-1').focus();
+			return;
+		}
+		const save = document.getElementById('review-save');
+		save.disabled = true;
+		try {
+			const first = !mine;
+			mine = await api(`/api/shows/${show.id}/reviews/me`, { method: 'PUT', auth: true, body: { rating, text: text.value } });
+			fill();
+			toast(first ? 'Thanks! Your review is up.' : 'Your review is updated.');
+		} catch (e) {
+			error.textContent = e.message;
+			error.hidden = false;
+		} finally {
+			save.disabled = false;
+		}
+	};
+	document.getElementById('review-delete').onclick = async () => {
+		if (!confirm('Delete your review of this show?')) return;
+		try {
+			await api(`/api/shows/${show.id}/reviews/me`, { method: 'DELETE', auth: true });
+			toast('Your review is deleted.');
+			location.hash = `#/show/${show.id}`;
+		} catch (e) {
+			toast(e.message, 'error');
+		}
+	};
 }
 
 /** "Add to calendar": the booking as an .ics file, which calendar apps open and import. */
@@ -1074,6 +1266,7 @@ async function renderRoute() {
 		const ticket = path.match(/^\/ticket\/(\d+)$/);
 		const reset = path.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
 		const adminShow = path.match(/^\/admin\/show\/(\d+)$/);
+		const review = path.match(/^\/review\/(\d+)$/);
 		if (path === '/admin' || path.startsWith('/admin/')) {
 			// Loaded only when an admin page is opened, so customers never download it
 			const admin = await import('./admin.js');
@@ -1081,6 +1274,7 @@ async function renderRoute() {
 			else if (path === '/admin/new') await admin.renderNewShow();
 			else if (path === '/admin/check-in') await admin.renderCheckIn(new URLSearchParams(query));
 			else if (path === '/admin/promo-codes') await admin.renderPromoCodes();
+			else if (path === '/admin/reviews') await admin.renderReviews(new URLSearchParams(query));
 			else await admin.renderAdmin(new URLSearchParams(query));
 		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);
@@ -1088,6 +1282,7 @@ async function renderRoute() {
 		else if (path === '/bookings') await renderBookings();
 		else if (path === '/account') await renderAccount();
 		else if (ticket) await renderTicket(ticket[1]);
+		else if (review) await renderReview(review[1]);
 		else if (path === '/forgot') renderForgot();
 		else if (reset) renderReset(reset[1]);
 		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
@@ -1148,4 +1343,4 @@ async function start() {
 start();
 
 // Shared with the admin pages (assets/admin.js)
-export { api, app, esc, money, when, toast, state, every, ApiError };
+export { api, app, esc, money, when, toast, state, every, ApiError, starsText, day };

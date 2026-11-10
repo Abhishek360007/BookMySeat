@@ -59,6 +59,8 @@ public class Booking {
 
 	private Long checkedInBy; // the admin who scanned it
 
+	private Instant reviewRequestedAt; // when the "How was it?" job looked at it (emailed or not), once
+
 	@Version
 	private Long version;
 
@@ -75,6 +77,10 @@ public class Booking {
 		this.status = BookingStatus.CONFIRMED;
 		this.totalAmount = show.totalFor(seats); // each seat at its category's price
 		this.createdAt = Instant.now();
+	}
+
+	public void reviewRequested(Instant now) {
+		this.reviewRequestedAt = now;
 	}
 
 	/** A promo code took `discount` off: the total becomes what is left to pay. */

@@ -203,6 +203,32 @@ public class EmailTemplates {
 		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, calendarEvent(booking));
 	}
 
+	/** After the show: one tap to rate it. The link opens the review page of the web app. */
+	public EmailMessage reviewRequest(Booking booking) {
+		Show show = booking.getShow();
+		String link = url("review/" + show.getId());
+		String subject = "How was " + show.getTitle() + "?";
+		String text = """
+				Hi %s,
+
+				We hope you enjoyed %s at %s on %s.
+				How was it? Rate it from 1 to 5 stars and, if you like, say a few words for the next people deciding:
+				%s
+
+				It takes ten seconds, and you can change it later.
+				""".formatted(booking.getUser().getName(), show.getTitle(), show.getVenue().getName(),
+				when(show.getStartTime()), link);
+		String html = layout("How was it?", """
+				<p>Hi %s,</p>
+				<p>We hope you enjoyed <b>%s</b> at %s on %s.</p>
+				<p>Rate it from 1 to 5 stars and, if you like, say a few words for the next people deciding.</p>
+				%s
+				<p style="color:#646779">It takes ten seconds, and you can change it later.</p>""".formatted(
+				esc(booking.getUser().getName()), esc(show.getTitle()), esc(show.getVenue().getName()),
+				when(show.getStartTime()), button("Rate " + show.getTitle(), link)));
+		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
+	}
+
 	public EmailMessage paymentRefunded(Payment payment) {
 		Show show = payment.getShow();
 		// No booking: the payment arrived after the seats were gone

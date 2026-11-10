@@ -2,10 +2,12 @@ package com.abhishekraj.BookMySeat.repository;
 
 import com.abhishekraj.BookMySeat.entity.Booking;
 import com.abhishekraj.BookMySeat.entity.BookingStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
@@ -63,4 +65,28 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
 	@Query("select coalesce(sum(b.totalAmount), 0) from Booking b where b.status = :status and b.createdAt > :after")
 	BigDecimal sumTotalByStatusAndCreatedAtAfter(BookingStatus status, Instant after);
+
+	// Reviews: the person's confirmed bookings for the show, locked (FOR UPDATE), so two reviews they save at
+	// the same moment take turns and the second edits the first instead of failing on the unique constraint
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("""
+			select b from Booking b where b.user.id = :userId and b.show.id = :showId
+			  and b.status = com.abhishekraj.BookMySeat.entity.BookingStatus.CONFIRMED order by b.id""")
+	List<Booking> lockConfirmed(Long userId, Long showId);
+
+	// "How was it?": confirmed bookings of shows that started in the window and nobody has looked at yet
+	@Query(value = """
+			SELECT b.id FROM bookings b JOIN shows s ON s.id = b.show_id
+			WHERE b.status = 'CONFIRMED' AND b.review_requested_at IS NULL AND s.status = 'SCHEDULED'
+			  AND s.start_time <= :startedBefore AND s.start_time > :startedAfter
+			ORDER BY s.start_time, b.id LIMIT :limit""", nativeQuery = true)
+	List<Long> findDueForReviewRequest(Instant startedBefore, Instant startedAfter, int limit);
+
+	// SKIP LOCKED: if another instance is handling this booking right now, leave it to them
+	@Query(value = """
+			SELECT * FROM bookings WHERE id = :id AND status = 'CONFIRMED' AND review_requested_at IS NULL
+			FOR UPDATE SKIP LOCKED""", nativeQuery = true)
+	Optional<Booking> lockForReviewRequest(Long id);
+
+	boolean existsByUserIdAndShowIdAndReviewRequestedAtIsNotNull(Long userId, Long showId);
 }

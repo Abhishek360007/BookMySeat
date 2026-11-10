@@ -56,17 +56,6 @@ public class OutboxEmail {
 	@OrderColumn(name = "idx")
 	private List<OutboxAttachment> attachments = new ArrayList<>();
 
-	// Before V19 an email had one attachment in these columns. V19 moved them into email_outbox_attachment;
-	// they are only read, for a row an instance still running the old version queued during a deploy.
-	@Column(length = 100, insertable = false, updatable = false)
-	private String attachmentName;
-
-	@Column(length = 100, insertable = false, updatable = false)
-	private String attachmentType;
-
-	@Column(insertable = false, updatable = false)
-	private byte[] attachmentContent;
-
 	@Column(nullable = false)
 	private Instant createdAt;
 
@@ -85,12 +74,8 @@ public class OutboxEmail {
 	}
 
 	public EmailMessage toMessage() {
-		List<EmailMessage.Attachment> all = new ArrayList<>();
-		if (attachmentContent != null) {
-			all.add(new EmailMessage.Attachment(attachmentName, attachmentType, attachmentContent));
-		}
-		attachments.forEach(attachment -> all.add(attachment.toAttachment()));
-		return new EmailMessage(recipient, subject, bodyText, bodyHtml, all);
+		return new EmailMessage(recipient, subject, bodyText, bodyHtml,
+				attachments.stream().map(OutboxAttachment::toAttachment).toList());
 	}
 
 	public boolean isDue(Instant now) {

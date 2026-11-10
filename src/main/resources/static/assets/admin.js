@@ -1,6 +1,6 @@
 // Admin pages of the web app. Loaded on demand (import()) only when an admin opens #/admin, so customers never
 // download it. Every action goes through the same ADMIN-only REST API that Swagger documents.
-import { api, app, esc, money, when, toast, state, every } from './app.js';
+import { api, app, esc, money, when, toast, state, every, starsText, day } from './app.js';
 
 const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : 0);
 
@@ -30,7 +30,8 @@ export async function renderAdmin(params) {
 	const page = Number(params.get('page') || 0);
 
 	app.innerHTML = `
-		<div class="row spread"><h1>Admin</h1><div class="row"><a class="btn btn-ghost" href="#/admin/promo-codes">Promo codes</a>
+		<div class="row spread"><h1>Admin</h1><div class="row"><a class="btn btn-ghost" href="#/admin/reviews">Reviews</a>
+			<a class="btn btn-ghost" href="#/admin/promo-codes">Promo codes</a>
 			<a class="btn btn-primary" href="#/admin/new">New show</a></div></div>
 		<div class="kpis" id="kpis"><p class="muted">Loading…</p></div>
 		<div class="row spread admin-filters">
@@ -700,4 +701,66 @@ export async function renderPromoCodes() {
 		});
 	}
 	await loadCodes();
+}
+
+// ---------- #/admin/reviews ----------
+
+export async function renderReviews(params) {
+	if (!requireAdmin()) return;
+	const views = { ALL: 'All', VISIBLE: 'Visible', HIDDEN: 'Hidden' };
+	const view = Object.keys(views).includes(params.get('show')) ? params.get('show') : 'ALL';
+	const page = Number(params.get('page') || 0);
+	app.innerHTML = `
+		<a href="#/admin" class="small">← Admin</a>
+		<h1>Reviews</h1>
+		<div class="tabs" role="tablist">
+			${Object.entries(views).map(([key, label]) => `<a role="tab" aria-selected="${key === view}" class="tab ${key === view ? 'active' : ''}"
+				href="#/admin/reviews?show=${key}">${label}</a>`).join('')}
+		</div>
+		<div id="review-admin"><p class="muted">Loading…</p></div>`;
+
+	async function load(focusId) {
+		const filter = view === 'ALL' ? '' : `&hidden=${view === 'HIDDEN'}`;
+		const result = await api(`/api/admin/reviews?size=20&page=${page}${filter}`, { auth: true });
+		const box = document.getElementById('review-admin');
+		if (!box) return;
+		if (result.content.length === 0) {
+			box.innerHTML = '<div class="card empty"><p class="muted">No reviews here.</p></div>';
+			return;
+		}
+		box.innerHTML = `
+			<div class="card table-wrap" tabindex="0" role="region" aria-label="Reviews"><table class="table">
+				<thead><tr><th>Show</th><th>Rating</th><th>Review</th><th>By</th><th>Date</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
+				<tbody>${result.content.map((r) => `<tr>
+					<td><a href="#/show/${esc(r.showId)}">${esc(r.showTitle)}</a></td>
+					<td><span class="stars-read" aria-hidden="true">${starsText(r.rating)}</span><span class="sr-only">${r.rating} out of 5</span></td>
+					<td class="small review-text">${r.text ? esc(r.text) : '<span class="muted">no text</span>'}</td>
+					<td class="small">${esc(r.authorName)}<div class="muted">${esc(r.authorEmail)}</div></td>
+					<td class="small">${esc(day.format(new Date(r.createdAt)))}${r.edited ? '<div class="muted">edited</div>' : ''}</td>
+					<td><span class="status ${r.hidden ? 'CANCELLED' : 'CONFIRMED'}">${r.hidden ? 'HIDDEN' : 'VISIBLE'}</span></td>
+					<td><button class="btn btn-ghost btn-small" data-review="${r.id}" data-hidden="${r.hidden}"
+						aria-label="${r.hidden ? 'Show again' : 'Hide'}: review by ${esc(r.authorName)} of ${esc(r.showTitle)}">${r.hidden ? 'Show again' : 'Hide'}</button></td>
+				</tr>`).join('')}</tbody></table></div>
+			<div class="row spread pager">
+				<a class="btn btn-ghost" ${page === 0 ? 'aria-disabled="true"' : `href="#/admin/reviews?show=${view}&page=${page - 1}"`}>Previous</a>
+				<span class="muted small">Page ${result.page + 1} of ${Math.max(result.totalPages, 1)}</span>
+				<a class="btn btn-ghost" ${page + 1 >= result.totalPages ? 'aria-disabled="true"' : `href="#/admin/reviews?show=${view}&page=${page + 1}"`}>Next</a>
+			</div>
+			<p class="muted small">A hidden review isn't shown on the show's page and doesn't count in its rating. Its author still sees it and is told it's hidden.</p>`;
+		box.querySelectorAll('[data-review]').forEach((b) => {
+			b.onclick = async () => {
+				const action = b.dataset.hidden === 'true' ? 'unhide' : 'hide';
+				try {
+					const updated = await api(`/api/admin/reviews/${b.dataset.review}/${action}`, { method: 'POST', auth: true });
+					toast(updated.hidden ? 'Review hidden' : 'Review shown again');
+					await load(updated.id);
+				} catch (e) {
+					toast(e.message, 'error');
+				}
+			};
+		});
+		// After hiding, focus stays on that review's button (it moves out of a filtered view: then the table)
+		if (focusId) (box.querySelector(`[data-review="${focusId}"]`) ?? box.querySelector('.table-wrap'))?.focus();
+	}
+	await load();
 }

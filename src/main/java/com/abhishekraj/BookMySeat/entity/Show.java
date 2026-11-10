@@ -54,6 +54,14 @@ public class Show {
 	@Column(name = "aisle_after", length = 50)
 	private String aisleAfter; // e.g. "4,8": aisles after seat 4 and seat 8 of every row
 
+	// Sum and count of the visible review ratings. Only ever changed by ShowRepository.adjustRating (an atomic
+	// "+ delta" UPDATE), never written from here: saving an edited show can't overwrite a review counted meanwhile
+	@Column(nullable = false, insertable = false, updatable = false)
+	private int ratingSum;
+
+	@Column(nullable = false, insertable = false, updatable = false)
+	private int ratingCount;
+
 	/** What one seat of this category costs now (bookings keep the total they were made with). */
 	public BigDecimal priceOf(SeatCategory category) {
 		return category == SeatCategory.REGULAR ? price : categoryPrices.getOrDefault(category, price);

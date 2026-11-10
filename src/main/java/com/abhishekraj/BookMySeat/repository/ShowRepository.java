@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
@@ -42,6 +43,12 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 	@Lock(LockModeType.PESSIMISTIC_READ)
 	@Query("select s from Show s where s.id = :id")
 	Optional<Show> findForBookingById(Long id);
+
+	// Atomic, so two reviews saved at once both count. The CHECK on shows refuses a count that would go wrong.
+	@Modifying
+	@Query(value = "UPDATE shows SET rating_sum = rating_sum + :sumDelta, rating_count = rating_count + :countDelta WHERE id = :showId",
+			nativeQuery = true)
+	int adjustRating(Long showId, int sumDelta, int countDelta);
 
 	// FOR UPDATE: waits for confirms in progress to commit, and blocks new ones until the cancel commits
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
