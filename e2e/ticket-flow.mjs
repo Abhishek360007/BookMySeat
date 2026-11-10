@@ -77,6 +77,35 @@ try {
 	check(new RegExp(`^T1\\.${booking.id}\\.[A-Za-z0-9_-]{22}$`).test(code), `the ticket shows its signed code (${code})`);
 	await customer.screenshot({ path: `${OUT}/t1-ticket.png`, fullPage: true });
 
+	// Add to calendar: an .ics download of this booking, from the ticket and from My bookings
+	const readDownload = async (download) => {
+		const chunks = [];
+		for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+		return Buffer.concat(chunks).toString('utf8').replace(/\r\n /g, ''); // unfold long lines
+	};
+	const calendarName = `Add to calendar: ${show.title}`;
+	let [download] = await Promise.all([
+		customer.waitForEvent('download'),
+		customer.getByRole('button', { name: calendarName }).click(),
+	]);
+	check(download.suggestedFilename() === `booking-${booking.id}.ics`, `the ticket's "Add to calendar" downloads booking-${booking.id}.ics`);
+	const ics = await readDownload(download);
+	const startUtc = new Date(show.startTime).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+	check(ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.includes(`UID:booking-${booking.id}@bookmyseat\r\n`)
+		&& ics.includes(`DTSTART:${startUtc}\r\n`) && ics.includes(`SUMMARY:E2E Ticket Show ${RUN}\r\n`)
+		&& ics.includes(code), 'the calendar event has the booking, the show time (UTC), its title and the ticket code');
+	await customer.locator('#announce', { hasText: 'Calendar file downloaded' }).waitFor();
+	check(true, 'the download is announced');
+
+	await customer.goto(`${BASE}/#/bookings`);
+	[download] = await Promise.all([
+		customer.waitForEvent('download'),
+		customer.getByRole('button', { name: calendarName }).click(),
+	]);
+	check(download.suggestedFilename() === `booking-${booking.id}.ics`, 'My bookings has "Add to calendar" for the booking too');
+	await customer.getByRole('link', { name: 'Ticket', exact: true }).first().click();
+	await qr.waitFor();
+
 	// Door: admin check-in page, code typed in
 	const adminContext = await browser.newContext({ viewport: { width: 1100, height: 860 } });
 	await adminContext.exposeFunction('reportCsp', (v) => csp.push(v));
