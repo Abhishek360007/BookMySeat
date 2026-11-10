@@ -19,7 +19,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
@@ -53,6 +56,7 @@ class TicketApiTest {
 	String admin;
 	String user;
 	long showId;
+	Instant showStart;
 	int bookingId;
 
 	@BeforeEach
@@ -101,13 +105,35 @@ class TicketApiTest {
 	}
 
 	@Test
+	void ownerGetsTheBookingAsACalendarEvent() throws Exception {
+		var response = mvc.perform(get("/api/bookings/" + bookingId + "/ticket.ics").header("Authorization", "Bearer " + user))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith("text/calendar"))
+				.andReturn().getResponse();
+		assertThat(response.getHeader("Content-Disposition"))
+				.isEqualTo("attachment; filename=\"booking-" + bookingId + ".ics\"");
+		String ics = new String(response.getContentAsByteArray(), StandardCharsets.UTF_8).replace("\r\n ", "");
+		DateTimeFormatter utc = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
+		assertThat(ics).startsWith("BEGIN:VCALENDAR\r\n").endsWith("END:VCALENDAR\r\n")
+				.contains("UID:booking-" + bookingId + "@bookmyseat\r\n",
+						"DTSTART:" + utc.format(showStart) + "\r\n",
+						"DTEND:" + utc.format(showStart.plus(3, ChronoUnit.HOURS)) + "\r\n",
+						"SUMMARY:Ticket Show\r\n",
+						"LOCATION:Ticket Venue\\, Pune\r\n", // commas are escaped in iCalendar text
+						"DESCRIPTION:Booking #" + bookingId + "\\, seats A1\\, A2\\n");
+	}
+
+	@Test
 	void someoneElsesBooking_is404_andNoTokenIs401() throws Exception {
 		String other = registerAndLogin("someone-else@example.com", "Sam");
 		mvc.perform(get("/api/bookings/" + bookingId + "/ticket").header("Authorization", "Bearer " + other))
 				.andExpect(status().isNotFound());
 		mvc.perform(get("/api/bookings/" + bookingId + "/ticket.png").header("Authorization", "Bearer " + other))
 				.andExpect(status().isNotFound());
+		mvc.perform(get("/api/bookings/" + bookingId + "/ticket.ics").header("Authorization", "Bearer " + other))
+				.andExpect(status().isNotFound());
 		mvc.perform(get("/api/bookings/" + bookingId + "/ticket")).andExpect(status().isUnauthorized());
+		mvc.perform(get("/api/bookings/" + bookingId + "/ticket.ics")).andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -116,6 +142,8 @@ class TicketApiTest {
 				.andExpect(status().isOk());
 		mvc.perform(get("/api/bookings/" + bookingId + "/ticket").header("Authorization", "Bearer " + user))
 				.andExpect(status().isConflict());
+		mvc.perform(get("/api/bookings/" + bookingId + "/ticket.ics").header("Authorization", "Bearer " + user))
+				.andExpect(status().isConflict());
 	}
 
 	long createShowWithSeats() throws Exception {
@@ -123,6 +151,7 @@ class TicketApiTest {
 						.contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Ticket Venue\",\"city\":\"Pune\"}"))
 				.andReturn().getResponse().getContentAsString(), "$.id");
 		Instant start = Instant.now().plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		showStart = start;
 		int id = JsonPath.read(mvc.perform(post("/api/shows").header("Authorization", "Bearer " + admin)
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"title\":\"Ticket Show\",\"startTime\":\"" + start + "\",\"price\":250.00,\"venueId\":" + venueId + "}"))

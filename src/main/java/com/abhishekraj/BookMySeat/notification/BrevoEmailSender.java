@@ -36,9 +36,15 @@ public class BrevoEmailSender implements EmailSender {
 				.contentType(MediaType.APPLICATION_JSON)
 				.body(new SendRequest(new Address(properties.from(), properties.fromName()),
 						List.of(new Address(message.to(), null)), message.subject(), message.text(), message.html(),
-						message.attachment() == null ? null : List.of(new BrevoAttachment(message.attachment().filename(),
-								Base64.getEncoder().encodeToString(message.attachment().content())))))
+						attachments(message)))
 				.retrieve()
 				.toBodilessEntity(); // a 4xx/5xx throws, and the outbox retries
+	}
+
+	// No attachments: the field is left out of the request (null), not sent as an empty list
+	private static List<BrevoAttachment> attachments(EmailMessage message) {
+		return message.attachments().isEmpty() ? null : message.attachments().stream()
+				.map(a -> new BrevoAttachment(a.filename(), Base64.getEncoder().encodeToString(a.content())))
+				.toList();
 	}
 }

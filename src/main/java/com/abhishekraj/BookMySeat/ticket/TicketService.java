@@ -19,16 +19,30 @@ public class TicketService {
 
 	private final BookingRepository bookingRepository;
 	private final TicketCodes codes;
+	private final BookingCalendar calendar;
 
 	/** The ticket of one of the user's own confirmed bookings (someone else's is a 404, like the booking itself). */
 	@Transactional(readOnly = true)
 	public TicketResponse ticket(Long userId, Long bookingId) {
+		return toTicket(confirmedBooking(userId, bookingId));
+	}
+
+	/** The booking as a calendar event (.ics), with the show's current time. */
+	@Transactional(readOnly = true)
+	public CalendarFile calendarEvent(Long userId, Long bookingId) {
+		Booking booking = confirmedBooking(userId, bookingId);
+		return new CalendarFile(calendar.filename(booking), calendar.ics(booking));
+	}
+
+	public record CalendarFile(String filename, byte[] content) {}
+
+	private Booking confirmedBooking(Long userId, Long bookingId) {
 		Booking booking = bookingRepository.findByIdAndUserId(bookingId, userId)
 				.orElseThrow(() -> new ResourceNotFoundException("Booking not found with id " + bookingId));
 		if (booking.getStatus() != BookingStatus.CONFIRMED) {
 			throw new ConflictException("Booking " + bookingId + " is cancelled, so it has no ticket");
 		}
-		return toTicket(booking);
+		return booking;
 	}
 
 	public TicketResponse toTicket(Booking booking) {

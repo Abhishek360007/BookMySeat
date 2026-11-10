@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "email_outbox")
@@ -48,12 +50,21 @@ public class OutboxEmail {
 	@Column(length = 500)
 	private String lastError;
 
-	@Column(length = 100)
+	// Eager: an email is only ever loaded to be sent (or looked at), and then it needs its attachments
+	@ElementCollection(fetch = FetchType.EAGER)
+	@CollectionTable(name = "email_outbox_attachment", joinColumns = @JoinColumn(name = "email_id"))
+	@OrderColumn(name = "idx")
+	private List<OutboxAttachment> attachments = new ArrayList<>();
+
+	// Before V19 an email had one attachment in these columns. V19 moved them into email_outbox_attachment;
+	// they are only read, for a row an instance still running the old version queued during a deploy.
+	@Column(length = 100, insertable = false, updatable = false)
 	private String attachmentName;
 
-	@Column(length = 100)
+	@Column(length = 100, insertable = false, updatable = false)
 	private String attachmentType;
 
+	@Column(insertable = false, updatable = false)
 	private byte[] attachmentContent;
 
 	@Column(nullable = false)
@@ -67,20 +78,19 @@ public class OutboxEmail {
 		this.subject = message.subject();
 		this.bodyText = message.text();
 		this.bodyHtml = message.html();
-		if (message.attachment() != null) {
-			this.attachmentName = message.attachment().filename();
-			this.attachmentType = message.attachment().contentType();
-			this.attachmentContent = message.attachment().content();
-		}
+		message.attachments().forEach(attachment -> this.attachments.add(new OutboxAttachment(attachment)));
 		this.status = Status.PENDING;
 		this.nextAttemptAt = now;
 		this.createdAt = now;
 	}
 
 	public EmailMessage toMessage() {
-		EmailMessage.Attachment attachment = attachmentContent == null ? null
-				: new EmailMessage.Attachment(attachmentName, attachmentType, attachmentContent);
-		return new EmailMessage(recipient, subject, bodyText, bodyHtml, attachment);
+		List<EmailMessage.Attachment> all = new ArrayList<>();
+		if (attachmentContent != null) {
+			all.add(new EmailMessage.Attachment(attachmentName, attachmentType, attachmentContent));
+		}
+		attachments.forEach(attachment -> all.add(attachment.toAttachment()));
+		return new EmailMessage(recipient, subject, bodyText, bodyHtml, all);
 	}
 
 	public boolean isDue(Instant now) {

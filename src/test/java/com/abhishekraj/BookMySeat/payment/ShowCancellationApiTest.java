@@ -29,7 +29,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -242,6 +245,12 @@ class ShowCancellationApiTest {
 		assertThat(emails("SHOW_RESCHEDULED")).singleElement().satisfies(e -> {
 			assertThat(e.getRecipient()).isEqualTo("asha@example.com");
 			assertThat(e.getBodyText()).contains("has moved to a new time", "Was: ", "Now: ", "Seats: A1");
+			// An updated calendar event: same UID as the one sent with the booking, the new start time
+			assertThat(e.toMessage().attachments()).singleElement().satisfies(ics -> {
+				assertThat(ics.filename()).endsWith(".ics");
+				assertThat(new String(ics.content(), StandardCharsets.UTF_8)).contains("DTSTART:"
+						+ DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(later));
+			});
 		});
 		assertThat(bookingRepository.findAll()).singleElement()
 				.satisfies(b -> assertThat(b.getTotalAmount()).isEqualByComparingTo("250.00"));

@@ -6,6 +6,8 @@ import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.User;
 import com.abhishekraj.BookMySeat.entity.WaitlistEntry;
+import com.abhishekraj.BookMySeat.ticket.BookingCalendar;
+import com.abhishekraj.BookMySeat.ticket.CalendarEvents;
 import com.abhishekraj.BookMySeat.ticket.QrCodes;
 import com.abhishekraj.BookMySeat.ticket.TicketCodes;
 import org.springframework.stereotype.Component;
@@ -32,10 +34,12 @@ public class EmailTemplates {
 
 	private final EmailProperties properties;
 	private final TicketCodes ticketCodes;
+	private final BookingCalendar calendar;
 
-	public EmailTemplates(EmailProperties properties, TicketCodes ticketCodes) {
+	public EmailTemplates(EmailProperties properties, TicketCodes ticketCodes, BookingCalendar calendar) {
 		this.properties = properties;
 		this.ticketCodes = ticketCodes;
+		this.calendar = calendar;
 	}
 
 	public EmailMessage verifyEmail(User user, String token, Duration linkLifetime) {
@@ -111,10 +115,11 @@ public class EmailTemplates {
 
 				Your ticket is attached: show its QR code at the entrance (or open My bookings on your phone).
 				Ticket code: %s
+				To put the show in your calendar, open the attached %s.
 
 				Your bookings: %s
 				""".formatted(booking.getUser().getName(), booking.getId(), show.getTitle(), when(show.getStartTime()),
-				show.getVenue().getName(), seats, total(booking), ticketCode, bookingsUrl());
+				show.getVenue().getName(), seats, total(booking), ticketCode, calendar.filename(booking), bookingsUrl());
 		String html = layout("You're booked!", """
 				<p>Hi %s,</p>
 				<table cellpadding="4" style="border-collapse:collapse">
@@ -127,12 +132,13 @@ public class EmailTemplates {
 				</table>
 				<p><b>Your ticket is attached.</b> Show its QR code at the entrance, or open My bookings on your phone.<br>
 				<span style="color:#646779">Ticket code: <code>%s</code></span></p>
+				<p>To put the show in your calendar, open the attached <b>%s</b>.</p>
 				%s""".formatted(esc(booking.getUser().getName()), booking.getId(), esc(show.getTitle()),
 				when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats), esc(total(booking)),
-				esc(ticketCode), button("View my bookings", bookingsUrl())));
+				esc(ticketCode), esc(calendar.filename(booking)), button("View my bookings", bookingsUrl())));
 		EmailMessage.Attachment ticket = new EmailMessage.Attachment("ticket-" + booking.getId() + ".png", "image/png",
 				QrCodes.png(ticketCode, 360));
-		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, ticket);
+		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, ticket, calendarEvent(booking));
 	}
 
 	/** showCancelled: the venue called off the whole show (not the customer cancelling their booking). */
@@ -176,9 +182,10 @@ public class EmailTemplates {
 				Where: %s
 				Seats: %s
 
+				The attached %s moves the show to the new time in your calendar.
 				If the new time doesn't work for you, you can cancel until 2 hours before the show (online payments are refunded in full): %s
 				""".formatted(booking.getUser().getName(), show.getTitle(), booking.getId(), when(previousStart),
-				when(show.getStartTime()), show.getVenue().getName(), seats(booking), bookingsUrl());
+				when(show.getStartTime()), show.getVenue().getName(), seats(booking), calendar.filename(booking), bookingsUrl());
 		String html = layout("New show time", """
 				<p>Hi %s,</p>
 				<p><b>%s</b> has moved to a new time. Your booking <b>#%d</b> and seats stay the same.</p>
@@ -188,11 +195,12 @@ public class EmailTemplates {
 				<tr><td style="color:#646779">Where</td><td>%s</td></tr>
 				<tr><td style="color:#646779">Seats</td><td>%s</td></tr>
 				</table>
+				<p>The attached <b>%s</b> moves the show to the new time in your calendar.</p>
 				<p>If the new time doesn't work for you, you can cancel until 2 hours before the show (online payments are refunded in full).</p>
 				%s""".formatted(esc(booking.getUser().getName()), esc(show.getTitle()), booking.getId(),
 				when(previousStart), when(show.getStartTime()), esc(show.getVenue().getName()), esc(seats(booking)),
-				button("View my bookings", bookingsUrl())));
-		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
+				esc(calendar.filename(booking)), button("View my bookings", bookingsUrl())));
+		return new EmailMessage(booking.getUser().getEmail(), subject, text, html, calendarEvent(booking));
 	}
 
 	public EmailMessage paymentRefunded(Payment payment) {
@@ -283,6 +291,10 @@ public class EmailTemplates {
 	String button(String label, String url) {
 		return "<p style=\"margin-top:20px\"><a href=\"%s\" style=\"background:#4f46e5;color:#ffffff;padding:10px 18px;border-radius:999px;text-decoration:none;font-weight:600\">%s</a></p>"
 				.formatted(esc(url), esc(label));
+	}
+
+	private EmailMessage.Attachment calendarEvent(Booking booking) {
+		return new EmailMessage.Attachment(calendar.filename(booking), CalendarEvents.CONTENT_TYPE, calendar.ics(booking));
 	}
 
 	String url(String fragment) {

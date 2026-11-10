@@ -30,9 +30,9 @@ public class SmtpEmailSender implements EmailSender {
 			helper.setTo(message.to());
 			helper.setSubject(message.subject());
 			helper.setText(message.text(), message.html()); // multipart/alternative: text and HTML
-			if (message.attachment() != null) {
-				helper.addAttachment(message.attachment().filename(),
-						new ByteArrayResource(message.attachment().content()), message.attachment().contentType());
+			for (EmailMessage.Attachment attachment : message.attachments()) {
+				helper.addAttachment(attachment.filename(), new ByteArrayResource(attachment.content()),
+						attachment.contentType());
 			}
 		} catch (MessagingException | UnsupportedEncodingException ex) {
 			throw new MailSendException("Could not build the email", ex);

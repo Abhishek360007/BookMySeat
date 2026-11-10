@@ -48,8 +48,9 @@ class EmailSenderTest {
 
 		new SmtpEmailSender(mailSender, PROPERTIES).send(MESSAGE);
 
-		String list = mailpitGet("/api/v1/messages");
-		assertThat(JsonPath.<Integer>read(list, "$.total")).isEqualTo(1);
+		// The Mailpit container is shared by the tests of this class: look only at this test's email
+		String list = mailpitGet("/api/v1/search?query=" + java.net.URLEncoder.encode("to:guest@example.com", java.nio.charset.StandardCharsets.UTF_8));
+		assertThat(JsonPath.<Integer>read(list, "$.messages_count")).isEqualTo(1);
 		assertThat(JsonPath.<String>read(list, "$.messages[0].Subject")).isEqualTo("Booking confirmed: Dune ₹500");
 		assertThat(JsonPath.<String>read(list, "$.messages[0].From.Address")).isEqualTo("no-reply@bookmyseat.test");
 		assertThat(JsonPath.<String>read(list, "$.messages[0].From.Name")).isEqualTo("BookMySeat");
@@ -61,13 +62,14 @@ class EmailSenderTest {
 	}
 
 	@Test
-	void smtp_carriesTheAttachment() throws Exception {
+	void smtp_carriesEveryAttachment() throws Exception {
 		JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
 		mailSender.setHost(mailpit.getHost());
 		mailSender.setPort(mailpit.getMappedPort(1025));
 		byte[] png = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
 		EmailMessage withTicket = new EmailMessage("ticket@example.com", "With ticket", "See attached", "<p>See attached</p>",
-				new EmailMessage.Attachment("ticket-7.png", "image/png", png));
+				new EmailMessage.Attachment("ticket-7.png", "image/png", png),
+				new EmailMessage.Attachment("booking-7.ics", "text/calendar; charset=UTF-8", "BEGIN:VCALENDAR".getBytes()));
 
 		new SmtpEmailSender(mailSender, PROPERTIES).send(withTicket);
 
@@ -76,6 +78,8 @@ class EmailSenderTest {
 		assertThat(JsonPath.<String>read(message, "$.Attachments[0].FileName")).isEqualTo("ticket-7.png");
 		assertThat(JsonPath.<String>read(message, "$.Attachments[0].ContentType")).isEqualTo("image/png");
 		assertThat(JsonPath.<Integer>read(message, "$.Attachments[0].Size")).isEqualTo(png.length);
+		assertThat(JsonPath.<String>read(message, "$.Attachments[1].FileName")).isEqualTo("booking-7.ics");
+		assertThat(JsonPath.<String>read(message, "$.Attachments[1].ContentType")).startsWith("text/calendar");
 	}
 
 	@Test
@@ -99,16 +103,19 @@ class EmailSenderTest {
 	}
 
 	@Test
-	void brevo_sendsTheAttachmentAsBase64() {
+	void brevo_sendsEveryAttachmentAsBase64() {
 		RestClient.Builder builder = RestClient.builder();
 		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
 		server.expect(requestTo("https://brevo.test/v3/smtp/email"))
 				.andExpect(jsonPath("$.attachment[0].name").value("ticket-7.png"))
 				.andExpect(jsonPath("$.attachment[0].content").value("AQID")) // base64 of bytes 1, 2, 3
+				.andExpect(jsonPath("$.attachment[1].name").value("booking-7.ics"))
+				.andExpect(jsonPath("$.attachment[1].content").value("QkVHSU4=")) // base64 of "BEGIN"
 				.andRespond(withStatus(HttpStatus.CREATED));
 
 		new BrevoEmailSender(builder, PROPERTIES).send(new EmailMessage("ticket@example.com", "With ticket", "x", "<p>x</p>",
-				new EmailMessage.Attachment("ticket-7.png", "image/png", new byte[] {1, 2, 3})));
+				new EmailMessage.Attachment("ticket-7.png", "image/png", new byte[] {1, 2, 3}),
+				new EmailMessage.Attachment("booking-7.ics", "text/calendar; charset=UTF-8", "BEGIN".getBytes())));
 		server.verify();
 	}
 

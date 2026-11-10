@@ -25,6 +25,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -126,10 +127,21 @@ class BookingEmailTest {
 		// The e-ticket rides along: its QR decodes to this booking's signed ticket code
 		String ticketCode = ticketCodes.codeFor(bookingId);
 		assertThat(email.text()).contains("Ticket code: " + ticketCode);
-		assertThat(email.attachment()).isNotNull();
-		assertThat(email.attachment().filename()).isEqualTo("ticket-" + bookingId + ".png");
-		assertThat(email.attachment().contentType()).isEqualTo("image/png");
-		assertThat(QrDecoder.decode(email.attachment().content())).isEqualTo(ticketCode);
+		// Both attachments went through the outbox table (the sender got them back from it), in order
+		assertThat(email.attachments()).hasSize(2);
+		EmailMessage.Attachment ticket = email.attachments().get(0);
+		assertThat(ticket.filename()).isEqualTo("ticket-" + bookingId + ".png");
+		assertThat(ticket.contentType()).isEqualTo("image/png");
+		assertThat(QrDecoder.decode(ticket.content())).isEqualTo(ticketCode);
+
+		// ...and the show as a calendar event, mentioned in the email
+		EmailMessage.Attachment event = email.attachments().get(1);
+		assertThat(event.filename()).isEqualTo("booking-" + bookingId + ".ics");
+		assertThat(event.contentType()).isEqualTo("text/calendar; charset=UTF-8");
+		assertThat(new String(event.content(), StandardCharsets.UTF_8).replace("\r\n ", ""))
+				.contains("UID:booking-" + bookingId + "@bookmyseat\r\n", "DTSTART:20271231T160000Z\r\n",
+						"SUMMARY:Dune <Part Three> & More\r\n", "Ticket code: " + ticketCode);
+		assertThat(email.text()).contains("open the attached booking-" + bookingId + ".ics");
 	}
 
 	@Test

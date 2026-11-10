@@ -98,6 +98,45 @@ class EmailOutboxTest {
 	}
 
 	@Test
+	void attachments_areStoredWithTheEmail_inOrder_andPurgedWithIt() {
+		EmailMessage withFiles = new EmailMessage("guest@example.com", "Files", "x", "<p>x</p>",
+				new EmailMessage.Attachment("ticket-1.png", "image/png", new byte[] {1, 2}),
+				new EmailMessage.Attachment("booking-1.ics", "text/calendar; charset=UTF-8", new byte[] {3}));
+		tx.executeWithoutResult(status -> outbox.enqueue("TEST", withFiles));
+
+		dispatcher.deliverDue();
+		assertThat(sender.sent).singleElement().satisfies(sent -> {
+			assertThat(sent.attachments()).extracting(EmailMessage.Attachment::filename)
+					.containsExactly("ticket-1.png", "booking-1.ics");
+			assertThat(sent.attachments().get(1).content()).containsExactly(3);
+		});
+		assertThat(jdbc.queryForObject("select count(*) from email_outbox_attachment", Integer.class)).isEqualTo(2);
+
+		// Purging sent emails is a bulk delete: the attachments go with them (ON DELETE CASCADE)
+		jdbc.update("update email_outbox set sent_at = now() - interval '30 days'");
+		assertThat(dispatcher.purgeSent()).isEqualTo(1);
+		assertThat(jdbc.queryForObject("select count(*) from email_outbox_attachment", Integer.class)).isZero();
+	}
+
+	@Test
+	void emailQueuedByThePreviousVersion_stillGoesOutWithItsAttachment() {
+		// During a deploy the old version still runs for a moment and writes its one attachment the V13 way
+		jdbc.update("""
+				insert into email_outbox (kind, recipient, subject, body_text, body_html, status, attempts,
+					next_attempt_at, created_at, attachment_name, attachment_type, attachment_content)
+				values ('BOOKING_CONFIRMED', 'old@example.com', 'Old', 'x', '<p>x</p>', 'PENDING', 0,
+					now() - interval '1 minute', now() - interval '1 minute',
+					'ticket-9.png', 'image/png', ?)""", (Object) new byte[] {9});
+
+		assertThat(dispatcher.deliverDue()).isEqualTo(1);
+		assertThat(sender.sent).singleElement().satisfies(sent -> assertThat(sent.attachments()).singleElement()
+				.satisfies(a -> {
+					assertThat(a.filename()).isEqualTo("ticket-9.png");
+					assertThat(a.content()).containsExactly(9);
+				}));
+	}
+
+	@Test
 	void failure_isRetriedWithBackoff_untilItSucceeds() {
 		tx.executeWithoutResult(status -> outbox.enqueue("TEST", MESSAGE));
 		sender.fail = true;
