@@ -66,6 +66,18 @@ async function api(path, { method = 'GET', body, auth = false, headers = {} } = 
 	return data;
 }
 
+/** A file the login token unlocks (the QR image, the calendar event), with the same one silent refresh on 401. */
+async function apiBlob(path, retried = false) {
+	const res = await fetch(path, { headers: state.accessToken ? { Authorization: `Bearer ${state.accessToken}` } : {} });
+	if (res.status === 401 && !retried && (await refreshSession())) return apiBlob(path, true);
+	if (!res.ok) {
+		let data = null;
+		try { data = await res.json(); } catch { data = null; }
+		throw new ApiError(res.status, data?.detail || data?.title || `Request failed (${res.status})`);
+	}
+	return res.blob();
+}
+
 /** Swaps the stored refresh token for a new pair; concurrent callers share one request. */
 function refreshSession() {
 	const refreshToken = sessionStorage.getItem(REFRESH_KEY);
@@ -811,10 +823,12 @@ async function renderBookings() {
 					</div>
 					${b.status === 'CONFIRMED' ? `<div class="row">
 						<a class="btn btn-primary" href="#/ticket/${b.id}">Ticket</a>
+						${calendarButton(b.id, b.showTitle)}
 						<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button></div>` : ''}
 				</div>`).join('')}
 		</div>`;
 	bindLeave();
+	bindCalendar();
 	app.querySelectorAll('[data-cancel]').forEach((button) => {
 		button.onclick = async () => {
 			if (!confirm('Cancel this booking? The seats will be released.')) return;
@@ -843,6 +857,37 @@ function bindLeave() {
 	});
 }
 
+/** "Add to calendar": the booking as an .ics file, which calendar apps open and import. */
+function calendarButton(bookingId, showTitle) {
+	// The visible text starts the accessible name, which says which booking it is (there is one per booking)
+	return `<button class="btn btn-ghost" data-calendar="${esc(bookingId)}" aria-label="Add to calendar: ${esc(showTitle)}">Add to calendar</button>`;
+}
+
+function bindCalendar() {
+	app.querySelectorAll('[data-calendar]').forEach((button) => {
+		button.onclick = async () => {
+			button.disabled = true;
+			try {
+				const id = button.dataset.calendar;
+				// Needs the login token, so it's downloaded from memory (a blob: URL) instead of a plain link
+				const url = URL.createObjectURL(await apiBlob(`/api/bookings/${id}/ticket.ics`));
+				const link = document.createElement('a');
+				link.href = url;
+				link.download = `booking-${id}.ics`;
+				document.body.append(link);
+				link.click();
+				link.remove();
+				setTimeout(() => URL.revokeObjectURL(url), 10000);
+				toast('Calendar file downloaded: open it to add the show to your calendar.');
+			} catch (e) {
+				toast(e.message, 'error');
+			} finally {
+				button.disabled = false;
+			}
+		};
+	});
+}
+
 /** #/ticket/<bookingId>: the e-ticket to show at the entrance. */
 async function renderTicket(bookingId) {
 	if (!(await requireLogin())) {
@@ -851,9 +896,7 @@ async function renderTicket(bookingId) {
 	}
 	const ticket = await api(`/api/bookings/${bookingId}/ticket`, { auth: true });
 	// The QR image needs the login token, so it's fetched and shown from memory (a blob: URL)
-	const res = await fetch(`/api/bookings/${bookingId}/ticket.png`, { headers: { Authorization: `Bearer ${state.accessToken}` } });
-	if (!res.ok) throw new ApiError(res.status, 'Could not load the ticket');
-	const qr = URL.createObjectURL(await res.blob());
+	const qr = URL.createObjectURL(await apiBlob(`/api/bookings/${bookingId}/ticket.png`));
 	app.innerHTML = `
 		<a href="#/bookings" class="small">← My bookings</a>
 		<div class="card ticket">
@@ -866,7 +909,9 @@ async function renderTicket(bookingId) {
 			${ticket.checkedInAt
 				? `<p class="status CONFIRMED">CHECKED IN ${esc(when.format(new Date(ticket.checkedInAt)))}</p>`
 				: '<p class="muted">Show this QR code at the entrance. Turn your screen brightness up.</p>'}
+			<div class="row ticket-actions">${calendarButton(ticket.bookingId, ticket.showTitle)}</div>
 		</div>`;
+	bindCalendar();
 }
 
 /** Landing page of the link in the verification email: #/verify/<token> */

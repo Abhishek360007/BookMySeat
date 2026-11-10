@@ -190,6 +190,7 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .ticket .qr { display: block; margin: 12px auto; width: 260px; height: 260px; background: #fff; padding: 8px; border-radius: 8px; image-rendering: pixelated; }
 .ticket .seats { font-size: 1.1rem; }
 .ticket code { word-break: break-all; }
+.ticket .ticket-actions { justify-content: center; margin-top: 8px; }
 
 /* Admin */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0 20px; }
