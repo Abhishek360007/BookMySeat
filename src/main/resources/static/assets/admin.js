@@ -776,11 +776,19 @@ export async function renderReviews(params) {
 
 // ---------- #/admin/films ----------
 
-export async function renderFilms() {
+export async function renderFilms(params) {
 	if (!requireAdmin()) return;
+	// Newest first (a film just created is on top), 20 a page, with a title search: the catalogue can grow long
+	const q = params.get('q') || '';
+	const page = Number(params.get('page') || 0);
+	const pageLink = (p) => `#/admin/films?${new URLSearchParams({ ...(q ? { q } : {}), page: String(p) })}`;
 	app.innerHTML = `
 		<a href="#/admin" class="small">← Admin</a>
 		<h1>Films</h1>
+		<form class="search" id="film-search" role="search">
+			<input name="q" value="${esc(q)}" placeholder="Search titles" aria-label="Search films by title">
+			<button class="btn btn-ghost">Search</button>
+		</form>
 		<div id="film-list"><p class="muted">Loading…</p></div>
 		<h2 id="film-form-h">New film</h2>
 		<form class="card admin-form" id="film-form" novalidate aria-labelledby="film-form-h">
@@ -829,8 +837,13 @@ export async function renderFilms() {
 			const saved = editing
 				? await api(`/api/admin/films/${editing.id}`, { method: 'PUT', auth: true, body })
 				: await api('/api/admin/films', { method: 'POST', auth: true, body });
-			toast(editing ? `Saved ${saved.title}` : `Created ${saved.title}`);
+			const created = !editing;
+			toast(created ? `Created ${saved.title}` : `Saved ${saved.title}`);
 			setMode(null);
+			if (created && (page !== 0 || q)) {
+				location.hash = '#/admin/films'; // a new film is on top of the first, unfiltered page
+				return;
+			}
 			await load();
 			document.querySelector(`#film-list [data-film="${saved.id}"]`)?.focus();
 		} catch (e) {
@@ -841,12 +854,22 @@ export async function renderFilms() {
 		}
 	};
 
+	document.getElementById('film-search').onsubmit = (event) => {
+		event.preventDefault();
+		const text = event.target.q.value.trim();
+		location.hash = `#/admin/films${text ? `?q=${encodeURIComponent(text)}` : ''}`;
+	};
+
 	async function load() {
-		const result = await api('/api/admin/films?size=100', { auth: true });
+		const filter = new URLSearchParams({ size: '20', page: String(page), sort: 'createdAt,desc' });
+		if (q) filter.set('q', q);
+		const result = await api(`/api/admin/films?${filter}`, { auth: true });
 		const box = document.getElementById('film-list');
 		if (!box) return;
 		if (result.content.length === 0) {
-			box.innerHTML = '<div class="card empty"><p class="muted">No films yet. Create one below, or create a show with a new title.</p></div>';
+			box.innerHTML = q
+				? `<div class="card empty"><p class="muted">No film's title contains "${esc(q)}".</p></div>`
+				: '<div class="card empty"><p class="muted">No films yet. Create one below, or create a show with a new title.</p></div>';
 			return;
 		}
 		box.innerHTML = `
@@ -861,6 +884,11 @@ export async function renderFilms() {
 					<td class="num">${f.shows}</td>
 					<td><button class="btn btn-ghost btn-small" data-edit="${f.id}" aria-label="Edit ${esc(f.title)}">Edit</button></td>
 				</tr>`).join('')}</tbody></table></div>
+			<div class="row spread pager">
+				<a class="btn btn-ghost" ${page === 0 ? 'aria-disabled="true"' : `href="${pageLink(page - 1)}"`}>Previous</a>
+				<span class="muted small">Page ${result.page + 1} of ${Math.max(result.totalPages, 1)} · ${result.totalElements} film${result.totalElements === 1 ? '' : 's'}</span>
+				<a class="btn btn-ghost" ${page + 1 >= result.totalPages ? 'aria-disabled="true"' : `href="${pageLink(page + 1)}"`}>Next</a>
+			</div>
 			<p class="muted small">A new title is carried to the film's shows; a new runtime moves the end of their calendar events and when people are asked how it was.</p>`;
 		box.querySelectorAll('[data-edit]').forEach((b) => {
 			b.onclick = () => {

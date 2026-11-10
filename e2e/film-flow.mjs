@@ -64,7 +64,7 @@ try {
 
 	// The Films page: a new film
 	await admin.goto(`${BASE}/#/admin`);
-	await admin.getByRole('link', { name: 'Films' }).click();
+	await admin.locator('#app').getByRole('link', { name: 'Films', exact: true }).click(); // not the top bar's Films
 	await admin.getByRole('heading', { name: 'Films', exact: true }).waitFor();
 	const filmForm = admin.locator('#film-form');
 	await filmForm.getByLabel('Title').fill(TITLE);

@@ -304,6 +304,11 @@ sequenceDiagram
 
 A film is what its screenings have in common: title, runtime, language, certificate (U, UA, A, S) and a synopsis. Admins keep them on the **Films** page; a show belongs to one film.
 
+<p>
+  <img src="docs/screenshots/home.png" alt="Home page: five films, each with its runtime, language, certificate, next showtime, number of showtimes and cheapest seat" width="49%">
+  <img src="docs/screenshots/film.png" alt="A film's page: its synopsis and three showtimes in Mumbai and Pune, grouped by day, each with its cheapest seat" width="49%">
+</p>
+
 ```mermaid
 flowchart LR
     F[(films<br/>title unique ignoring case<br/>runtime, rating sum and count)] --- S1[(show: Pune, Fri 6:30 pm)]
@@ -530,7 +535,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Waitlist | A sold-out show offers **Join waitlist** (1 to 6 seats) and then shows your place in line; an offer appears within one refresh as held seats with a countdown, to book or **Decline**. My bookings lists your places in line |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
-| Admin pages | Dashboard, new show form, a page per show, **Films** (create and edit, with their number of shows), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
+| Admin pages | Dashboard, new show form, a page per show, **Films** (newest first with a title search, 20 a page; create and edit, with their number of shows), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
 | Reviews | The film's page and its screenings carry the average ("★ 4.3 · 12 reviews") and list the reviews, newest or highest rated first. After the start, My bookings swaps **Cancel** for **Rate this film** (or your stars, to edit). The review page is a 5-star radio group (arrow keys work, lit stars are filled and the others outlined, so not only the colour tells them apart) and an optional text |
 | E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned. **Add to calendar** on the ticket and in My bookings downloads the `.ics` (with the login token, so through a `blob:` URL) |
 | Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
@@ -661,7 +666,7 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 
 **Small-instance tuning:** `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k` keeps memory around 300 MB of the 512 MB limit (measured in a local container limited to 512 MB and 0.1 CPU) and suits a single slow CPU.
 
-**Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the venue, a far-future show with 50 seats (a premium row, a recliner row and a centre aisle), and the demo user. It is idempotent (safe to re-run), and the admin password is only ever passed as a parameter:
+**Demo data:** [`scripts/seed-demo.ps1`](scripts/seed-demo.ps1) creates the demo show "Dune: Part Three" with 50 seats (a premium row, a recliner row and a centre aisle), the demo user, and a small catalogue: five films with their runtime, language, certificate and synopsis (four of them made up) and ten showtimes in Mumbai and Pune, all between December 2027 and January 2028 so the demo never runs out of bookable shows. It is idempotent: a second run skips everything that exists and only brings film details up to date; it never changes or cancels a show. The admin password is only ever passed as a parameter:
 
 ```powershell
 .\scripts\seed-demo.ps1 -BaseUrl https://bookmyseat-8j1e.onrender.com -AdminEmail <admin> -AdminPassword '<admin password>'
@@ -712,7 +717,7 @@ Otherwise the JVM in 512 MB refuses to start (`Unable to use AOT cache`). Compac
 | Unit (JUnit + Mockito, milliseconds) | `BookingServiceTest` | Cancellation cutoff boundaries and the "show already started" rule, with a fixed `Clock` |
 | Integration (Testcontainers) | `SeatHoldConcurrencyTest` | 50 concurrent holds on one seat in real Redis: exactly 1 wins |
 | Integration (Testcontainers) | `BookingConcurrencyTest` | 50 concurrent confirms in real PostgreSQL: exactly 1 booking |
-| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V22) applies to an empty database |
+| Integration (Testcontainers) | `BookMySeatApplicationTests` | The app starts and every Flyway migration (V1 to V23) applies to an empty database |
 | HTTP (MockMvc + Testcontainers) | `BusinessMetricsTest` | Seats by category, booking value, cancellations by customer or show, counters at 0 from startup, nothing counted for a rolled-back transaction, outbox gauges |
 | HTTP (MockMvc + Testcontainers) | `LoginConnectionTest` | The password check runs with no transaction open, so a login doesn't hold a database connection during BCrypt |
 | Integration (real HTTP + fake OTLP gateway) | `OtlpExportTest` | Metrics and traces arrive gzipped with the auth header and resource attributes; the request's span carries its request id, its database queries are spans with `?` instead of parameter values, health probes make none, the log line has the trace id |
@@ -751,6 +756,20 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 24:** best seats in one click: the best block of seats together (middle of the row, about two thirds back, never across an aisle), held in the same call and picked again when someone was faster (8 people at once never share a seat); calendar events (`.ics`) in the confirmation email, an updated one when a show moves, and **Add to calendar** on the ticket; outbox emails with several attachments, migrated without losing one during a deploy
 - [x] **Week 25:** reviews and ratings by people who went: an average kept by atomic updates (exact under parallel saves; the lock's test fails without it) and cleared from the cache after commit, a "How was it?" email after the show, an admin Reviews page to hide spam, a 5-star radio group that works with the keyboard, and a browser test; the attachment columns that V19 replaced dropped in V21
 - [x] **Week 26:** films: a film groups its screenings (title, runtime, language, certificate, synopsis), the home page lists films with their rating, next showtime and cheapest seat, a film page with showtimes by day, reviews once per person per film across its screenings, the runtime in the calendar event and the review email, an admin Films page; existing shows and ratings moved over by V22
+- [x] **Week 27:** finishing: the shows' old rating columns dropped (V23, the second half of V22's two-release change), the web app speaks of films throughout, a seeded demo catalogue of five films and ten showtimes in two cities, fresh screenshots taken from a clean seeded database
+
+## Status
+
+**Complete.** Everything on the roadmap is built, tested (unit, HTTP and race tests against real PostgreSQL and Redis, browser tests for every flow, an accessibility audit) and deployed. What it deliberately leaves out, and why:
+
+| Left out | Why |
+|---|---|
+| Real payments | Razorpay runs in test mode: a public demo shouldn't take money. Switching to live keys is configuration, not code |
+| Film posters and trailers | They need file storage and a CDN; the Content-Security-Policy only allows the app's own images today |
+| Several cinema chains, seat maps per screen | A venue has one hall, and each show generates its own seat map |
+| Instant wake-up | Render's free tier sleeps after 15 idle minutes and takes 2 to 3 minutes to wake; the start page shows the wait. A paid instance stays awake |
+
+The demo video and its GIF at the top were recorded before films existed: the booking itself (seats, hold, countdown, confirm) is unchanged, but the home page now lists films.
 
 ## Author
 

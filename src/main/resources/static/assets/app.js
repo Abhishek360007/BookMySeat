@@ -347,10 +347,10 @@ async function renderFilm(filmId, params) {
 async function renderShow(showId) {
 	const show = await api(`/api/shows/${showId}`);
 	if (show.status === 'CANCELLED') {
-		app.innerHTML = `<a href="#/" class="small">← All shows</a>
+		app.innerHTML = `<a href="#/" class="small">← All films</a>
 			<div class="card empty"><h1>${esc(show.title)}</h1><p><span class="status CANCELLED">CANCELLED</span></p>
 			<p class="muted">This show has been cancelled. Anyone who had booked it has been refunded and emailed.</p>
-			<a class="btn btn-primary" href="#/">Find another show</a></div>`;
+			<a class="btn btn-primary" href="#/">Find another film</a></div>`;
 		return;
 	}
 	let seats = await api(`/api/shows/${showId}/seats`);
@@ -385,7 +385,7 @@ async function renderShow(showId) {
 	await loadWait();
 
 	app.innerHTML = `
-		<a href="#/" class="small">← All shows</a>
+		<a href="#/" class="small">← All films</a>
 		<h1>${esc(show.title)}</h1>
 		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(runtimeText(show.runtimeMinutes))} · <span id="seat-prices"></span></p>
 		<p>${show.ratingCount ? `${ratingSummary(show)} · ` : ''}<a href="#/film/${esc(show.filmId)}">About the film and other showtimes</a></p>
@@ -784,7 +784,7 @@ async function renderShow(showId) {
 			stopTimers();
 			app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">↩</div><h1>Seats no longer available</h1>
 				<p>Your payment arrived too late to book these seats (they were taken, or the promo code ran out), so it is being refunded in full.</p>
-				<a class="btn btn-primary" href="#/">Back to shows</a></div>`;
+				<a class="btn btn-primary" href="#/">Back to films</a></div>`;
 			focusStart(app.querySelector('h1'));
 		}
 	}
@@ -885,7 +885,7 @@ async function renderBookings() {
 				</div>`).join('')}
 		</div>`;
 	if (bookings.length === 0) {
-		app.innerHTML = `<h1>My bookings</h1>${waitlistHtml}<div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a show</a></div>`;
+		app.innerHTML = `<h1>My bookings</h1>${waitlistHtml}<div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a film</a></div>`;
 		bindLeave();
 		return;
 	}
@@ -1176,11 +1176,11 @@ async function renderVerify(token) {
 		}
 		app.innerHTML = `<div class="card success"><div class="big" aria-hidden="true">✓</div>
 			<h1>Email confirmed</h1><p class="muted">${esc(result.email)} is verified. Thanks!</p>
-			<a class="btn btn-primary" href="#/">Find a show</a></div>`;
+			<a class="btn btn-primary" href="#/">Find a film</a></div>`;
 	} catch (e) {
 		app.innerHTML = `<div class="card empty"><h1>Link not valid</h1><p class="muted">${esc(e.message)}</p>
 			${state.user && !state.user.emailVerified ? '<button class="btn btn-primary" type="button" id="verify-again">Send a new link</button>' : ''}
-			<a class="btn btn-ghost" href="#/">Back to shows</a></div>`;
+			<a class="btn btn-ghost" href="#/">Back to films</a></div>`;
 		document.getElementById('verify-again')?.addEventListener('click', resendVerification);
 	}
 }
@@ -1209,7 +1209,7 @@ function renderForgot() {
 			form.parentElement.innerHTML = `<h1>Check your inbox</h1>
 				<p>If there's an account for <strong>${esc(email)}</strong>, we've emailed it a link to reset the password.
 				The link works once and expires in 1 hour. Check the spam folder too.</p>
-				<a class="btn btn-ghost" href="#/">Back to shows</a>`;
+				<a class="btn btn-ghost" href="#/">Back to films</a>`;
 		} catch (e) {
 			error.textContent = e.message;
 			error.hidden = false;
@@ -1334,11 +1334,11 @@ async function renderRoute() {
 			else if (path === '/admin/check-in') await admin.renderCheckIn(new URLSearchParams(query));
 			else if (path === '/admin/promo-codes') await admin.renderPromoCodes();
 			else if (path === '/admin/reviews') await admin.renderReviews(new URLSearchParams(query));
-			else if (path === '/admin/films') await admin.renderFilms();
+			else if (path === '/admin/films') await admin.renderFilms(new URLSearchParams(query));
 			else await admin.renderAdmin(new URLSearchParams(query));
 		} else if (show) await renderShow(show[1]);
 		else if (verify) await renderVerify(verify[1]);
-		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
+		else if (path === '/verify') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a film</a></div>';
 		else if (path === '/bookings') await renderBookings();
 		else if (path === '/account') await renderAccount();
 		else if (ticket) await renderTicket(ticket[1]);
@@ -1347,10 +1347,10 @@ async function renderRoute() {
 		else if (filmReview) await renderReview(filmReview[1]);
 		else if (path === '/forgot') renderForgot();
 		else if (reset) renderReset(reset[1]);
-		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a show</a></div>';
+		else if (path === '/reset') app.innerHTML = '<div class="card empty"><p>Done here.</p><a class="btn btn-primary" href="#/">Find a film</a></div>';
 		else await renderHome(new URLSearchParams(query));
 	} catch (e) {
-		app.innerHTML = `<div class="card empty"><h1>Something went wrong</h1><p class="muted">${esc(e.message)}</p><a href="#/">Back to shows</a></div>`;
+		app.innerHTML = `<div class="card empty"><h1>Something went wrong</h1><p class="muted">${esc(e.message)}</p><a href="#/">Back to films</a></div>`;
 	}
 	window.scrollTo(0, 0);
 	const heading = app.querySelector('h1');

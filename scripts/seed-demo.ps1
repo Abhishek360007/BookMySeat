@@ -1,9 +1,12 @@
 <#
 .SYNOPSIS
-    Seeds the BookMySeat demo data: one venue, one far-future show with 50 seats, and a public demo user.
+    Seeds the BookMySeat demo data: the demo show "Dune: Part Three" with 50 seats, a public demo user, and a small
+    catalogue of films (runtime, language, certificate, synopsis) with showtimes in Mumbai and Pune.
 
 .DESCRIPTION
-    Idempotent: anything that already exists is skipped, so it is safe to run more than once.
+    Idempotent: anything that already exists is skipped (a film's details are brought up to date), so it is safe
+    to run more than once. It never cancels or changes an existing show. Showtimes are far in the future (December
+    2027 to January 2028), so the demo never runs out of bookable shows.
     The admin password is only ever passed as a parameter; it is never stored in this script.
 
 .EXAMPLE
@@ -92,4 +95,57 @@ try {
 	}
 }
 
-Write-Host "Done. Show id $($show.id): $BaseUrl/api/shows/$($show.id)/seats"
+# 6. The catalogue: films with their details, each with a few showtimes. The films are made up, except the demo show's.
+$pune = @(Invoke-Api GET '/api/venues') | Where-Object { $_.name -eq 'Starlight Cinema' } | Select-Object -First 1
+if ($pune) {
+	Write-Host "  venue (Pune)       exists (id $($pune.id)), skipped"
+} else {
+	$pune = Invoke-Api POST '/api/venues' @{ name = 'Starlight Cinema'; city = 'Pune'; address = 'Koregaon Park' } $token
+	Write-Host "  venue (Pune)       created (id $($pune.id))"
+}
+
+$catalogue = @(
+	@{ title = $ShowTitle; runtimeMinutes = 165; language = 'English'; certificate = 'UA'
+		synopsis = 'The next chapter of the desert saga, on the biggest screen in town.'; shows = @() },
+	@{ title = 'The Monsoon Letters'; runtimeMinutes = 132; language = 'Hindi'; certificate = 'U'
+		synopsis = "Two strangers in Mumbai trade letters through one rainy season.`nNeither knows the other lives three floors down."
+		shows = @(@{ venue = $venue; start = '2027-12-18T13:30:00Z' }, @{ venue = $pune; start = '2027-12-19T14:00:00Z' }) },
+	@{ title = 'Orbit of Ashes'; runtimeMinutes = 148; language = 'English'; certificate = 'UA'
+		synopsis = 'A salvage crew answers a distress call from a ship that should not exist.'
+		shows = @(@{ venue = $venue; start = '2027-12-20T15:30:00Z' }, @{ venue = $pune; start = '2027-12-21T16:00:00Z' }, @{ venue = $venue; start = '2028-01-08T15:30:00Z' }) },
+	@{ title = 'Chai at Midnight'; runtimeMinutes = 104; language = 'Hindi'; certificate = 'U'
+		synopsis = 'One night-shift tea stall, eight customers, and the longest night of the year.'
+		shows = @(@{ venue = $pune; start = '2027-12-22T16:30:00Z' }) },
+	@{ title = 'Kaveri Express'; runtimeMinutes = 141; language = 'Tamil'; certificate = 'UA'
+		synopsis = 'A train from Chennai to Mysuru, a missing suitcase, and nobody who is quite who they say.'
+		shows = @(@{ venue = $venue; start = '2027-12-27T12:30:00Z' }, @{ venue = $pune; start = '2028-01-03T13:00:00Z' }) }
+)
+
+foreach ($entry in $catalogue) {
+	$details = @{ title = $entry.title; runtimeMinutes = $entry.runtimeMinutes; language = $entry.language
+		certificate = $entry.certificate; synopsis = $entry.synopsis }
+	$film = @((Invoke-Api GET "/api/admin/films?size=100&q=$([Uri]::EscapeDataString($entry.title))" $null $token).content) |
+		Where-Object { $_.title -eq $entry.title } | Select-Object -First 1
+	if ($film) {
+		$film = Invoke-Api PUT "/api/admin/films/$($film.id)" $details $token
+		Write-Host ("  film               {0}: details up to date" -f $entry.title)
+	} else {
+		$film = Invoke-Api POST '/api/admin/films' $details $token
+		Write-Host ("  film               {0}: created (id {1})" -f $entry.title, $film.id)
+	}
+	foreach ($slot in $entry.shows) {
+		$existing = @(Invoke-Api GET "/api/shows?venueId=$($slot.venue.id)") |
+			Where-Object { $_.filmId -eq $film.id -and ([DateTime] $_.startTime).ToUniversalTime() -eq ([DateTime] $slot.start).ToUniversalTime() } |
+			Select-Object -First 1
+		if ($existing) {
+			Write-Host ("    showtime         {0}, {1}: exists, skipped" -f $slot.start, $slot.venue.city)
+			continue
+		}
+		$new = Invoke-Api POST '/api/shows' @{ filmId = $film.id; startTime = $slot.start; price = 220.00; venueId = $slot.venue.id
+			categoryPrices = @{ PREMIUM = 320.00; RECLINER = 450.00 }; aisleAfter = @(5) } $token
+		Invoke-Api POST "/api/shows/$($new.id)/seats" @{ rows = 5; seatsPerRow = 10; premiumRows = 1; reclinerRows = 1 } $token | Out-Null
+		Write-Host ("    showtime         {0}, {1}: created (id {2}, 50 seats)" -f $slot.start, $slot.venue.city, $new.id)
+	}
+}
+
+Write-Host "Done. Demo show id $($show.id): $BaseUrl/api/shows/$($show.id)/seats"
