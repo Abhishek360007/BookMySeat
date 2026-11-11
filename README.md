@@ -38,6 +38,7 @@
 - **Waitlist for sold-out shows:** customers join the line for 1 to 6 seats. When a booking is cancelled, the freed seats are held in Redis for the first person whose request fits, for 15 minutes, before the cancel even commits, so nobody can grab them in between. They get an email, book the seats like any other held seats, and an offer that runs out or is declined goes to the next person. See [Waitlist](#waitlist).
 - **Promo codes:** percentage or fixed discounts with total and per-person limits that hold under parallel bookings (each use is counted under the code's row lock; 12 people racing for 5 uses get exactly 5), a use reserved for a Razorpay order and given back when it expires, is refunded or the booking is cancelled, and the discount kept on the booking like its price. See [Promo codes](#promo-codes).
 - **Films and their screenings:** the home page lists films, each with its poster, rating, runtime, the next showtime and the cheapest seat; a film's page has its showtimes by day (in your city) and its reviews. Shows join a film by id or by title (created on the fly, one per title even when several shows are created at once), and the runtime ends the calendar event and times the review email. See [Films](#films).
+- **Follow a film:** one email per follower when a film gets new showtimes, all of them together, 10 minutes after they're added (time to fix a mistake); each show announced exactly once, even with two instances running the job. See [Following films](#following-films).
 - **Reviews from people who went:** a rating from 1 to 5 and an optional text, only with a confirmed booking for a screening that has started, one per person per film whichever screening they saw. The average sits on the film itself, kept exact by atomic updates in the review's transaction (6 saves by one person and 8 people at once give one review each and the right sum; the test fails without the lock), a "How was it?" email after the show, and admin moderation. See [Reviews](#reviews).
 - **Accessible web app:** an axe-core audit of every page (WCAG 2.2 AA, phone and desktop, light and dark, 320 px wide) passes with no violations, and a browser test books seats with the keyboard alone: the seat map is one Tab stop with arrow keys, focus survives the live refresh, and screen readers hear about holds and waitlist offers. See [Accessibility](#accessibility).
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
@@ -353,9 +354,30 @@ flowchart LR
 | Moderation? | Admins see every review with its film and author on the **Reviews** page and can hide one: it leaves the list and the average, its author still sees it (and is told it's hidden), and it can be shown again |
 | "How was it?" | A job every 15 minutes (one instance, ShedLock) looks at each confirmed booking once, 30 minutes after its show ended (start plus the film's runtime). It emails a link to the film's review page unless that person already reviewed the film or was asked about it through another booking. Shows that started more than 7 days ago are skipped, so a first deploy or a long sleep never emails about something long past. The demo account is never emailed |
 
+## Following films
+
+**Follow this film** on a film's page, and you get an email when it gets new showtimes. My bookings lists the films you follow, with what's coming up and **Stop following**.
+
+```mermaid
+flowchart LR
+    A[Admin adds showtimes] --> S[(shows<br/>created_at, followers_notified_at)]
+    J[Job every 5 min<br/>ShedLock] -->|shows created 10+ min ago,<br/>not announced yet| L[Lock them: SKIP LOCKED]
+    L --> M[Mark all as announced]
+    M -->|new and not cancelled| E[One email per follower<br/>listing all of them, via the outbox]
+```
+
+| Question | Answer |
+|---|---|
+| When is the email sent? | 10 minutes after a showtime is created at the earliest, so an admin can still fix or cancel a mistake: a job every 5 minutes picks up the shows created before then that nobody was told about. All of a film's new showtimes go in one email per follower, soonest first, with the venue and the cheapest seat |
+| Can someone be told twice? | No. The job locks the film's unannounced shows (`FOR UPDATE SKIP LOCKED`), marks them all as announced, and queues the emails in the same transaction, so a second run, or a second instance, finds nothing left. A cancelled show, or one that has started by then, is marked without being mentioned |
+| And the shows that existed before? | V25 marked them all as announced, so the first deploy emailed nobody about old showtimes (tested) |
+| Following twice? | One follow: `INSERT ... ON CONFLICT DO NOTHING` (5 requests at once give one row, tested). Stopping when not following is fine too |
+| The button? | A toggle (`aria-pressed`) whose name stays "Follow this film"; the line beside it says what it means and is announced when it changes. The bell and tick are CSS decoration with empty alt text, so they aren't read as part of the name. Logged out, it asks to log in first |
+| Unsubscribing? | Every email says why it came and how to stop (the film's page, or My bookings). The shared demo account never gets one |
+
 ## Emails
 
-Booking confirmed, booking cancelled, show rescheduled, refund completed, waitlist offer and waitlist closed, "How was it?" after a show, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
+Booking confirmed, booking cancelled, show rescheduled, refund completed, waitlist offer and waitlist closed, "How was it?" after a show, new showtimes of a film you follow, and a link to confirm the email address after registering. Each one has a plain-text and an HTML version; user-supplied text (names, show titles) is HTML-escaped.
 
 ```mermaid
 flowchart LR
@@ -472,6 +494,8 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | PUT | `/api/films/{filmId}/reviews/me` | User | Write or edit your review: `{rating, text?}`; needs a confirmed booking for one of its screenings that has started (`409` with the `reason` otherwise) |
 | DELETE | `/api/films/{filmId}/reviews/me` | User | Delete your review |
 | GET, PUT, DELETE | `/api/shows/{showId}/reviews`, `/reviews/me` | Public / User | The same for that screening's film |
+| PUT / DELETE | `/api/films/{id}/follow` | User | Follow a film (emailed about its new showtimes) or stop; both idempotent |
+| GET | `/api/films/following` | User | The films you follow, newest first, with how many showtimes each has coming up |
 | GET | `/api/reviews/me` | User | Your reviews, with `hidden` if an admin hid one |
 | POST | `/api/admin/check-in` | Admin | Check a ticket in at the door (`showId` + scanned `code`); once only |
 | GET | `/api/bookings/me` | User | Your bookings, newest first |
@@ -541,6 +565,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
 | Admin pages | Dashboard, new show form, a page per show, **Films** (newest first with a title search, 20 a page; create and edit, with their number of shows; upload or remove a poster), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
+| Following | **Follow this film** on a film's page (a toggle that says what it does); My bookings lists the films you follow with what's coming up, and **Stop following** |
 | Reviews | The film's page and its screenings carry the average ("★ 4.3 · 12 reviews") and list the reviews, newest or highest rated first. After the start, My bookings swaps **Cancel** for **Rate this film** (or your stars, to edit). The review page is a 5-star radio group (arrow keys work, lit stars are filled and the others outlined, so not only the colour tells them apart) and an optional text |
 | E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned. **Add to calendar** on the ticket and in My bookings downloads the `.ics` (with the login token, so through a `blob:` URL) |
 | Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
