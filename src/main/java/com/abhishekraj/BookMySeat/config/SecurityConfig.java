@@ -95,6 +95,7 @@ public class SecurityConfig {
 				.requestMatchers("/api/admin/**").hasRole("ADMIN")
 				// Your own review of a show: any logged-in user (before the admin-only rule for the rest of /api/shows)
 				.requestMatchers("/api/shows/*/reviews/me", "/api/films/*/reviews/me").authenticated()
+				.requestMatchers("/api/films/following", "/api/films/*/follow").authenticated()
 				.requestMatchers(HttpMethod.GET, "/api/venues/**", "/api/shows/**", "/api/films/**").permitAll()
 				.requestMatchers("/api/venues/**", "/api/shows/**").hasRole("ADMIN")
 				.anyRequest().authenticated())

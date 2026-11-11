@@ -48,6 +48,12 @@ public class Show {
 
 	private Instant cancelledAt;
 
+	// Set by the database when the show is created (V25), never written from here
+	@Column(nullable = false, insertable = false, updatable = false)
+	private Instant createdAt;
+
+	private Instant followersNotifiedAt; // when the film's followers were told about it (or it was skipped), once
+
 	// Prices of the non-regular categories; REGULAR seats cost `price`
 	@ElementCollection
 	@CollectionTable(name = "show_category_prices", joinColumns = @JoinColumn(name = "show_id"))
