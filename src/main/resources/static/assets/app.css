@@ -133,6 +133,10 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .poster.large.placeholder { font-size: 3rem; }
 .poster.small.placeholder { font-size: 1rem; }
 .poster-box { margin-top: 12px; }
+.follow-row { margin-top: 12px; }
+.follow-btn::before { content: '🔔 ' / ''; } /* empty alt text: the icons are not part of the button's name */
+.follow-btn.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.follow-btn.on::before { content: '✓ ' / ''; }
 .poster-box h3 { margin: 0; }
 .film-head { display: flex; gap: 20px; align-items: flex-start; margin: 8px 0 20px; }
 .film-head h1 { margin-top: 0; }

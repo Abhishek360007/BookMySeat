@@ -344,6 +344,10 @@ async function renderFilm(filmId, params) {
 				<p class="muted">${filmFacts(film)}</p>
 				${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
 				${film.synopsis ? `<p class="synopsis">${esc(film.synopsis)}</p>` : ''}
+				<div class="row follow-row">
+					<button class="btn btn-ghost follow-btn" id="follow-btn" aria-pressed="false" aria-describedby="follow-status">Follow this film</button>
+					<span class="muted small" id="follow-status" aria-live="polite"></span>
+				</div>
 			</div>
 		</div>
 		<section aria-labelledby="showtimes-h">
@@ -362,6 +366,7 @@ async function renderFilm(filmId, params) {
 			<div id="reviews"><p class="muted">Loading reviews…</p></div>
 		</section>`;
 	renderFilmReviews(film.id, wentToIt);
+	setUpFollow(film);
 }
 
 async function renderShow(showId) {
@@ -956,6 +961,48 @@ function bindLeave() {
 			}
 		};
 	});
+}
+
+/**
+ * "Follow this film": a toggle button (aria-pressed) whose name stays the same; the line beside it says what it
+ * means, and is announced when it changes. Logged out, it asks to log in first, then follows.
+ */
+async function setUpFollow(film) {
+	const button = document.getElementById('follow-btn');
+	const status = document.getElementById('follow-status');
+	let following = false;
+	const paint = (changed) => {
+		button.setAttribute('aria-pressed', String(following));
+		button.classList.toggle('on', following);
+		status.textContent = following
+			? 'Following: we\'ll email you when new showtimes are added.'
+			: (changed ? 'Not following any more.' : 'Get an email when new showtimes are added.');
+	};
+	if (state.user) {
+		const mine = await api('/api/films/following', { auth: true }).catch(() => []);
+		following = mine.some((f) => f.filmId === film.id);
+	}
+	paint(false);
+	button.onclick = async () => {
+		if (!state.user && !(await requireLogin())) return;
+		if (!following) {
+			// Just logged in: they may follow it already
+			const mine = await api('/api/films/following', { auth: true }).catch(() => []);
+			following = mine.some((f) => f.filmId === film.id);
+			if (following) { paint(true); return; }
+		}
+		button.disabled = true;
+		try {
+			await api(`/api/films/${film.id}/follow`, { method: following ? 'DELETE' : 'PUT', auth: true });
+			following = !following;
+			paint(true);
+		} catch (e) {
+			toast(e.message, 'error');
+		} finally {
+			button.disabled = false;
+			button.focus();
+		}
+	};
 }
 
 /** A film's reviews (on its page and its screenings'): newest or highest rated first, 10 at a time. */
