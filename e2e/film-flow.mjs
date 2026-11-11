@@ -40,7 +40,7 @@ async function newPage(context, who, csp) {
 	await context.addInitScript(() => document.addEventListener('securitypolicyviolation', (e) => window.reportCsp(`${e.violatedDirective} ${e.blockedURI}`)));
 	const page = await context.newPage();
 	page.on('pageerror', (e) => problems.push(`${who}: page error: ${e.message}`));
-	page.on('console', (m) => { if (m.type() === 'error' && !/status of 40[49]/.test(m.text())) problems.push(`${who}: console error: ${m.text()}`); });
+	page.on('console', (m) => { if (m.type() === 'error' && !/status of (40[49]|415)/.test(m.text()) /* 415: the fake poster, on purpose */) problems.push(`${who}: console error: ${m.text()}`); });
 	return page;
 }
 
@@ -55,6 +55,7 @@ try {
 	const csp = [];
 	const adminContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	const admin = await newPage(adminContext, 'admin', csp);
+	admin.on('dialog', (d) => d.accept()); // "Remove the poster?"
 	await admin.goto(`${BASE}/`);
 	await admin.getByRole('button', { name: 'Log in' }).click();
 	await admin.locator('#auth-form').getByLabel('Email').fill(ADMIN_EMAIL);
@@ -76,6 +77,32 @@ try {
 	await admin.locator(`[data-film]`, { hasText: TITLE }).waitFor();
 	check(await admin.evaluate(() => document.activeElement?.dataset?.film !== undefined), 'after creating, focus goes to the new film in the list');
 	await admin.screenshot({ path: `${OUT}/f1-admin-films.png`, fullPage: true });
+
+	// Its poster: Edit, then upload. A text file named .png is refused by what it is, not by its name
+	await admin.getByRole('button', { name: `Edit ${TITLE}` }).click();
+	await admin.locator('#poster-box').waitFor();
+	check(await admin.locator('#poster-current .poster.placeholder').isVisible(), 'a film without a poster shows its initials');
+	await admin.locator('#poster-file').setInputFiles({ name: 'fake.png', mimeType: 'image/png', buffer: Buffer.from('not an image at all') });
+	await admin.getByRole('button', { name: 'Upload poster' }).click();
+	await admin.locator('#poster-error', { hasText: 'JPEG or PNG' }).waitFor();
+	check(true, 'a file that is not a JPEG or PNG is refused with the reason');
+	const png = Buffer.from((await admin.evaluate(() => {
+		const canvas = document.createElement('canvas');
+		canvas.width = 600;
+		canvas.height = 900;
+		const g = canvas.getContext('2d');
+		g.fillStyle = '#7c3aed';
+		g.fillRect(0, 0, 600, 900);
+		g.fillStyle = '#fde68a';
+		g.fillRect(100, 300, 400, 300);
+		return canvas.toDataURL('image/png');
+	})).split(',')[1], 'base64');
+	await admin.locator('#poster-file').setInputFiles({ name: 'poster.png', mimeType: 'image/png', buffer: png });
+	await admin.getByRole('button', { name: 'Upload poster' }).click();
+	await admin.locator('#poster-current img.poster').waitFor();
+	check(await admin.locator('#poster-error').isHidden(), 'a PNG uploads (the error from before is gone)');
+	check(await admin.locator('tbody tr', { hasText: TITLE }).locator('img.poster').count() === 1, 'the film list shows the poster');
+	await admin.getByRole('button', { name: 'Cancel editing' }).click();
 
 	// Two showtimes through the New show form: the existing title hides the runtime field
 	for (const [hall, day] of [[hallA, 2], [hallB, 3]]) {
@@ -109,6 +136,10 @@ try {
 	check(cardText.includes('1 h 56 min') && cardText.includes('English') && cardText.includes('UA'), 'the home card shows runtime, language and certificate');
 	check(cardText.includes('2 showtimes') && cardText.includes('₹180'), 'the home card counts the showtimes and gives the cheapest seat');
 	check(cardText.includes(`E2E Film Hall A ${RUN}`), 'the home card names the next showtime\'s venue');
+	const cardPoster = card.locator('img.poster');
+	await cardPoster.evaluate((img) => img.decode());
+	check(await cardPoster.evaluate((img) => img.naturalWidth === 480 && img.naturalHeight === 720 && img.alt === ''),
+		'the home card shows the poster, 480 x 720 (cropped and resized by the server), as decoration');
 
 	// Narrowed to a city: only that city's showtime, on the card and on the film's page
 	await visitor.goto(`${BASE}/#/?q=${encodeURIComponent(TITLE)}&city=${encodeURIComponent(CITY_B)}`);
@@ -133,10 +164,18 @@ try {
 	check(await admin.evaluate(() => document.activeElement?.name) === 'title', 'Edit puts focus in the title field');
 	await admin.locator('#film-form').getByLabel('Title').fill(`${TITLE} (Director's Cut)`);
 	await admin.getByRole('button', { name: 'Save film' }).click();
-	await admin.locator('[data-film]', { hasText: "(Director's Cut)" }).waitFor();
+	await admin.locator('[data-film]', { hasText: `${TITLE} (Director's Cut)` }).waitFor();
 	await visitor.reload();
 	await visitor.locator('h1', { hasText: "(Director's Cut)" }).waitFor();
 	check(true, 'a renamed film renames its shows');
+
+	// Removing the poster: the film page falls back to the initials
+	await admin.getByRole('button', { name: `Edit ${TITLE} (Director's Cut)` }).click();
+	await admin.getByRole('button', { name: 'Remove poster' }).click();
+	await admin.locator('#poster-current .poster.placeholder').waitFor();
+	await visitor.goto(`${BASE}/#/film/${created.filmId}`);
+	await visitor.locator('.film-head .poster.placeholder').waitFor();
+	check(true, 'without its poster, the film page shows the initials');
 
 	await visitor.goto(`${BASE}/#/film/${created.filmId}`);
 	await visitor.setViewportSize({ width: 360, height: 800 });
