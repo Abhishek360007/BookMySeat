@@ -346,7 +346,7 @@ async function renderFilm(filmId, params) {
 				${film.synopsis ? `<p class="synopsis">${esc(film.synopsis)}</p>` : ''}
 				<div class="row follow-row">
 					<button class="btn btn-ghost follow-btn" id="follow-btn" aria-pressed="false" aria-describedby="follow-status">Follow this film</button>
-					<span class="muted small" id="follow-status" aria-live="polite"></span>
+					<span class="muted small" id="follow-status" aria-live="polite">Get an email when new showtimes are added.</span>
 				</div>
 			</div>
 		</div>
