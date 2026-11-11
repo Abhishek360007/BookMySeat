@@ -120,6 +120,23 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .show-card { display: flex; flex-direction: column; gap: .25rem; text-decoration: none; color: inherit; transition: border-color .15s; }
 .show-card:hover { border-color: var(--accent); }
 .show-card .title { font-weight: 650; font-size: 1.1rem; }
+/* Posters: always 2:3 (the server crops them so), a placeholder with the initials when there is none */
+.film-card { flex-direction: row; align-items: flex-start; gap: 12px; }
+.film-card-body { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.poster { display: block; flex: none; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 8px; background: var(--seat-free); }
+.poster.thumb { width: 88px; }
+.poster.large { width: 200px; }
+.poster.small { width: 64px; }
+.poster.placeholder { display: grid; place-items: center; font-weight: 700; letter-spacing: .05em; color: var(--accent);
+	background: linear-gradient(160deg, var(--seat-free), var(--surface)); border: 1px solid var(--border); }
+.poster.thumb.placeholder { font-size: 1.4rem; }
+.poster.large.placeholder { font-size: 3rem; }
+.film-head { display: flex; gap: 20px; align-items: flex-start; margin: 8px 0 20px; }
+.film-head h1 { margin-top: 0; }
+@media (max-width: 560px) {
+	.film-head { flex-direction: column; }
+	.poster.large { width: 160px; }
+}
 .price { font-weight: 650; }
 .pager { margin-top: 1rem; }
 

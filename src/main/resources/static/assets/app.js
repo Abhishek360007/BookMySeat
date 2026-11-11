@@ -47,6 +47,18 @@ function filmFacts(film) {
 	return [runtimeText(film.runtimeMinutes), film.language, film.certificate].filter(Boolean).map(esc).join(' · ');
 }
 
+/**
+ * A film's poster, or a placeholder with its initials. Decorative (alt=""): the title is always next to it.
+ * width/height reserve its place, so the page doesn't jump as posters load.
+ */
+function posterImage(film, size) {
+	if (film.posterUrl) {
+		return `<img class="poster ${size}" src="${esc(film.posterUrl)}" alt="" width="480" height="720" loading="lazy" decoding="async">`;
+	}
+	const initials = film.title.split(/\s+/).filter((w) => /^[\p{L}\p{N}]/u.test(w)).slice(0, 2).map((w) => [...w][0]).join('');
+	return `<span class="poster ${size} placeholder" aria-hidden="true">${esc(initials.toUpperCase())}</span>`;
+}
+
 function priceLabel(show) {
 	const prices = Object.values(show.prices ?? {}).map(Number);
 	const lowest = prices.length ? Math.min(...prices) : Number(show.price);
@@ -290,12 +302,15 @@ async function renderHome(params) {
 	box.innerHTML = `
 		<div class="shows">
 			${results.content.map((film) => `
-				<a class="card show-card" href="#/film/${film.id}${city ? `?city=${encodeURIComponent(city)}` : ''}">
-					<span class="title">${esc(film.title)}</span>
-					<span class="muted small">${filmFacts(film)}</span>
-					${ratingSummary(film)}
-					<span>Next: ${esc(when.format(new Date(film.nextShows[0].startTime)))} · ${esc(film.nextShows[0].venueName)}</span>
-					<span class="price">${film.upcomingShows} showtime${film.upcomingShows > 1 ? 's' : ''} · from ${esc(money.format(film.fromPrice))}</span>
+				<a class="card show-card film-card" href="#/film/${film.id}${city ? `?city=${encodeURIComponent(city)}` : ''}">
+					${posterImage(film, 'thumb')}
+					<span class="film-card-body">
+						<span class="title">${esc(film.title)}</span>
+						<span class="muted small">${filmFacts(film)}</span>
+						${ratingSummary(film)}
+						<span>Next: ${esc(when.format(new Date(film.nextShows[0].startTime)))} · ${esc(film.nextShows[0].venueName)}</span>
+						<span class="price">${film.upcomingShows} showtime${film.upcomingShows > 1 ? 's' : ''} · from ${esc(money.format(film.fromPrice))}</span>
+					</span>
 				</a>`).join('')}
 		</div>
 		<div class="row spread pager">
@@ -322,10 +337,15 @@ async function renderFilm(filmId, params) {
 		: false;
 	app.innerHTML = `
 		<a href="#/${city ? `?city=${encodeURIComponent(city)}` : ''}" class="small">← All films</a>
-		<h1>${esc(film.title)}</h1>
-		<p class="muted">${filmFacts(film)}</p>
-		${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
-		${film.synopsis ? `<p class="synopsis">${esc(film.synopsis)}</p>` : ''}
+		<div class="film-head">
+			${posterImage(film, 'large')}
+			<div>
+				<h1>${esc(film.title)}</h1>
+				<p class="muted">${filmFacts(film)}</p>
+				${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
+				${film.synopsis ? `<p class="synopsis">${esc(film.synopsis)}</p>` : ''}
+			</div>
+		</div>
 		<section aria-labelledby="showtimes-h">
 			<h2 id="showtimes-h">Showtimes${city ? ` in ${esc(city)}` : ''}</h2>
 			${shows.length === 0 ? `<p class="muted">No showtimes coming up${city ? ` in ${esc(city)}. <a href="#/film/${film.id}">See every city</a>` : '.'}</p>` : days.map((d) => `
@@ -1405,4 +1425,4 @@ async function start() {
 start();
 
 // Shared with the admin pages (assets/admin.js)
-export { api, app, esc, money, when, toast, state, every, ApiError, starsText, day, runtimeText };
+export { api, app, esc, money, when, toast, state, every, ApiError, starsText, day, runtimeText, posterImage, apiBlob, refreshSession };
