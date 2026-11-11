@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.core.PropertyReferenceException;
+import com.abhishekraj.BookMySeat.film.PosterRejectedException;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -154,6 +156,29 @@ public class GlobalExceptionHandler {
 		if (ex.getCheckedInAt() != null) {
 			problem.setProperty("checkedInAt", ex.getCheckedInAt().toString());
 		}
+		return problem;
+	}
+
+	// 415 for a file that isn't a JPEG or PNG, 413 for one too big, 422 for an image that can't be a poster
+	@ExceptionHandler(PosterRejectedException.class)
+	public ProblemDetail handlePosterRejected(PosterRejectedException ex) {
+		HttpStatus status = switch (ex.getReason()) {
+			case UNSUPPORTED_TYPE -> HttpStatus.UNSUPPORTED_MEDIA_TYPE;
+			case FILE_TOO_BIG -> HttpStatus.PAYLOAD_TOO_LARGE;
+			default -> HttpStatus.UNPROCESSABLE_ENTITY;
+		};
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, ex.getMessage());
+		problem.setTitle("Not a usable poster");
+		problem.setProperty("reason", ex.getReason().name());
+		return problem;
+	}
+
+	// The servlet's own limit (spring.servlet.multipart.*), for uploads bigger still
+	@ExceptionHandler(MaxUploadSizeExceededException.class)
+	public ProblemDetail handleUploadTooBig(MaxUploadSizeExceededException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.PAYLOAD_TOO_LARGE, "Posters can be at most 5 MB");
+		problem.setTitle("Not a usable poster");
+		problem.setProperty("reason", PosterRejectedException.Reason.FILE_TOO_BIG.name());
 		return problem;
 	}
 

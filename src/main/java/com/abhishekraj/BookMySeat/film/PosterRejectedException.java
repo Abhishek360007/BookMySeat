@@ -3,7 +3,7 @@ package com.abhishekraj.BookMySeat.film;
 /** An upload that can't be a poster. reason is machine-readable; the message says what to do instead. */
 public class PosterRejectedException extends RuntimeException {
 
-	public enum Reason { NOT_AN_IMAGE, UNSUPPORTED_TYPE, TOO_SMALL, TOO_LARGE }
+	public enum Reason { NOT_AN_IMAGE, UNSUPPORTED_TYPE, TOO_SMALL, TOO_LARGE, FILE_TOO_BIG }
 
 	private final Reason reason;
 

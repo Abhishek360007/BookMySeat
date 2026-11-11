@@ -50,6 +50,9 @@ public class Film {
 	@Column(nullable = false)
 	private Instant createdAt;
 
+	@Column(length = 16)
+	private String posterVersion; // null: no poster; else its version, which is in the poster's URL
+
 	public Film(String title, int runtimeMinutes, Instant now) {
 		this.title = title;
 		this.runtimeMinutes = runtimeMinutes;

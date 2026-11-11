@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PosterImagesTest {
 
-	static byte[] image(String format, int width, int height, int type, Color fill) throws IOException {
+	public static byte[] image(String format, int width, int height, int type, Color fill) throws IOException {
 		BufferedImage image = new BufferedImage(width, height, type);
 		Graphics2D g = image.createGraphics();
 		g.setColor(fill);
