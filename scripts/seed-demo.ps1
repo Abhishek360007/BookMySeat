@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
     Seeds the BookMySeat demo data: the demo show "Dune: Part Three" with 50 seats, a public demo user, and a small
-    catalogue of films (runtime, language, certificate, synopsis) with showtimes in Mumbai and Pune.
+    catalogue of films (runtime, language, certificate, synopsis, a poster for the made-up ones) with showtimes in
+    Mumbai and Pune.
 
 .DESCRIPTION
     Idempotent: anything that already exists is skipped (a film's details are brought up to date), so it is safe
@@ -40,6 +41,20 @@ function Invoke-Api([string] $Method, [string] $Path, $Body = $null, [string] $T
 	# Windows PowerShell 5.1 returns a JSON array as ONE object; writing it out here unrolls it,
 	# so @(Invoke-Api ...) is a real list in both 5.1 and 7 (and an empty [] gives Count 0)
 	$result
+}
+
+# A poster as multipart/form-data, built by hand: Windows PowerShell 5.1 has no -Form
+function Send-Poster([long] $FilmId, [string] $Path, [string] $Token) {
+	$boundary = [Guid]::NewGuid().ToString('N')
+	$file = [IO.File]::ReadAllBytes($Path)
+	$head = [Text.Encoding]::ASCII.GetBytes("--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"$([IO.Path]::GetFileName($Path))`"`r`nContent-Type: image/jpeg`r`n`r`n")
+	$tail = [Text.Encoding]::ASCII.GetBytes("`r`n--$boundary--`r`n")
+	$body = New-Object byte[] ($head.Length + $file.Length + $tail.Length)
+	[Array]::Copy($head, 0, $body, 0, $head.Length)
+	[Array]::Copy($file, 0, $body, $head.Length, $file.Length)
+	[Array]::Copy($tail, 0, $body, $head.Length + $file.Length, $tail.Length)
+	Invoke-RestMethod -Method Put -Uri "$BaseUrl/api/admin/films/$FilmId/poster" -Headers @{ Authorization = "Bearer $Token" } `
+		-ContentType "multipart/form-data; boundary=$boundary" -Body $body -TimeoutSec 180
 }
 
 function Get-StatusCode($ErrorRecord) {
@@ -107,16 +122,16 @@ if ($pune) {
 $catalogue = @(
 	@{ title = $ShowTitle; runtimeMinutes = 165; language = 'English'; certificate = 'UA'
 		synopsis = 'The next chapter of the desert saga, on the biggest screen in town.'; shows = @() },
-	@{ title = 'The Monsoon Letters'; runtimeMinutes = 132; language = 'Hindi'; certificate = 'U'
+	@{ title = 'The Monsoon Letters'; runtimeMinutes = 132; language = 'Hindi'; certificate = 'U'; poster = 'the-monsoon-letters.jpg'
 		synopsis = "Two strangers in Mumbai trade letters through one rainy season.`nNeither knows the other lives three floors down."
 		shows = @(@{ venue = $venue; start = '2027-12-18T13:30:00Z' }, @{ venue = $pune; start = '2027-12-19T14:00:00Z' }) },
-	@{ title = 'Orbit of Ashes'; runtimeMinutes = 148; language = 'English'; certificate = 'UA'
+	@{ title = 'Orbit of Ashes'; runtimeMinutes = 148; language = 'English'; certificate = 'UA'; poster = 'orbit-of-ashes.jpg'
 		synopsis = 'A salvage crew answers a distress call from a ship that should not exist.'
 		shows = @(@{ venue = $venue; start = '2027-12-20T15:30:00Z' }, @{ venue = $pune; start = '2027-12-21T16:00:00Z' }, @{ venue = $venue; start = '2028-01-08T15:30:00Z' }) },
-	@{ title = 'Chai at Midnight'; runtimeMinutes = 104; language = 'Hindi'; certificate = 'U'
+	@{ title = 'Chai at Midnight'; runtimeMinutes = 104; language = 'Hindi'; certificate = 'U'; poster = 'chai-at-midnight.jpg'
 		synopsis = 'One night-shift tea stall, eight customers, and the longest night of the year.'
 		shows = @(@{ venue = $pune; start = '2027-12-22T16:30:00Z' }) },
-	@{ title = 'Kaveri Express'; runtimeMinutes = 141; language = 'Tamil'; certificate = 'UA'
+	@{ title = 'Kaveri Express'; runtimeMinutes = 141; language = 'Tamil'; certificate = 'UA'; poster = 'kaveri-express.jpg'
 		synopsis = 'A train from Chennai to Mysuru, a missing suitcase, and nobody who is quite who they say.'
 		shows = @(@{ venue = $venue; start = '2027-12-27T12:30:00Z' }, @{ venue = $pune; start = '2028-01-03T13:00:00Z' }) }
 )
@@ -132,6 +147,15 @@ foreach ($entry in $catalogue) {
 	} else {
 		$film = Invoke-Api POST '/api/admin/films' $details $token
 		Write-Host ("  film               {0}: created (id {1})" -f $entry.title, $film.id)
+	}
+	# The made-up films' posters (scripts/posters, made by make-posters.mjs); a poster already there is kept
+	if ($entry.poster) {
+		if ($film.posterUrl) {
+			Write-Host "    poster           exists, skipped"
+		} else {
+			Send-Poster $film.id (Join-Path $PSScriptRoot "posters\$($entry.poster)") $token | Out-Null
+			Write-Host "    poster           uploaded ($($entry.poster))"
+		}
 	}
 	foreach ($slot in $entry.shows) {
 		$existing = @(Invoke-Api GET "/api/shows?venueId=$($slot.venue.id)") |
