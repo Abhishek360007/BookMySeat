@@ -878,11 +878,26 @@ async function renderBookings() {
 		location.hash = '#/';
 		return;
 	}
-	const [bookings, waitlist, reviews] = await Promise.all([
+	const [bookings, waitlist, reviews, following] = await Promise.all([
 		api('/api/bookings/me', { auth: true }),
 		api('/api/waitlist/me', { auth: true }).catch(() => []),
 		api('/api/reviews/me', { auth: true }).catch(() => []),
+		api('/api/films/following', { auth: true }).catch(() => []),
 	]);
+	// The films you follow, at the bottom: what's coming up, and a way to stop
+	const followingHtml = following.length === 0 ? '' : `
+		<h2>Films you follow</h2>
+		<div class="bookings" id="following">
+			${following.map((f) => `
+				<div class="card row spread">
+					<div class="row">
+						${posterImage({ title: f.title, posterUrl: f.posterUrl }, 'small')}
+						<div><a href="#/film/${esc(f.filmId)}"><strong>${esc(f.title)}</strong></a>
+							<div class="muted small">${f.upcomingShows ? `${f.upcomingShows} showtime${f.upcomingShows > 1 ? 's' : ''} coming up` : 'No showtimes yet: we\'ll email you'}</div></div>
+					</div>
+					<button class="btn btn-ghost" data-unfollow="${esc(f.filmId)}" aria-label="Stop following ${esc(f.title)}">Stop following</button>
+				</div>`).join('')}
+		</div>`;
 	const reviewOf = new Map(reviews.map((r) => [r.filmId, r]));
 	// After the show: no cancelling any more, but a rating (or the one you gave, to change)
 	const afterShow = (b) => {
@@ -910,14 +925,15 @@ async function renderBookings() {
 				</div>`).join('')}
 		</div>`;
 	if (bookings.length === 0) {
-		app.innerHTML = `<h1>My bookings</h1>${waitlistHtml}<div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a film</a></div>`;
+		app.innerHTML = `<h1>My bookings</h1>${waitlistHtml}<div class="card empty"><p>No bookings yet.</p><a class="btn btn-primary" href="#/">Find a film</a></div>${followingHtml}`;
 		bindLeave();
+		bindUnfollow();
 		return;
 	}
 	app.innerHTML = `
 		<h1>My bookings</h1>
 		${waitlistHtml}
-		${waitlist.length ? '<h2>Bookings</h2>' : ''}
+		${waitlist.length || following.length ? '<h2>Bookings</h2>' : ''}
 		<div class="bookings">
 			${bookings.map((b) => `
 				<div class="card row spread">
@@ -932,8 +948,10 @@ async function renderBookings() {
 						${calendarButton(b.id, b.showTitle)}
 						${new Date(b.showStartTime) <= new Date() ? afterShow(b) : `<button class="btn btn-danger" data-cancel="${b.id}">Cancel</button>`}</div>` : ''}
 				</div>`).join('')}
-		</div>`;
+		</div>
+		${followingHtml}`;
 	bindLeave();
+	bindUnfollow();
 	bindCalendar();
 	app.querySelectorAll('[data-cancel]').forEach((button) => {
 		button.onclick = async () => {
@@ -942,6 +960,27 @@ async function renderBookings() {
 				await api(`/api/bookings/${button.dataset.cancel}/cancel`, { method: 'POST', auth: true });
 				toast(state.config.paymentsEnabled ? 'Booking cancelled. Your refund is on its way.' : 'Booking cancelled.');
 				renderBookings();
+			} catch (e) {
+				toast(e.message, 'error');
+			}
+		};
+	});
+}
+
+function bindUnfollow() {
+	app.querySelectorAll('[data-unfollow]').forEach((button) => {
+		button.onclick = async () => {
+			try {
+				await api(`/api/films/${button.dataset.unfollow}/follow`, { method: 'DELETE', auth: true });
+				const card = button.closest('.card');
+				const next = card.nextElementSibling ?? card.previousElementSibling;
+				toast(`You stopped following ${button.getAttribute('aria-label').replace('Stop following ', '')}.`);
+				card.remove();
+				// Keep the keyboard where it was: the next film's button, else the section's heading
+				const target = next?.querySelector('[data-unfollow]') ?? document.querySelector('h1');
+				if (target?.tagName === 'H1') target.tabIndex = -1;
+				target?.focus();
+				if (!document.querySelector('#following .card')) document.getElementById('following')?.previousElementSibling?.remove();
 			} catch (e) {
 				toast(e.message, 'error');
 			}
