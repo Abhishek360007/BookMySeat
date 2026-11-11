@@ -1,6 +1,20 @@
 // Admin pages of the web app. Loaded on demand (import()) only when an admin opens #/admin, so customers never
 // download it. Every action goes through the same ADMIN-only REST API that Swagger documents.
-import { api, app, esc, money, when, toast, state, every, starsText, day, runtimeText } from './app.js';
+import { api, app, esc, money, when, toast, state, every, starsText, day, runtimeText, posterImage, refreshSession } from './app.js';
+
+const MAX_POSTER_BYTES = 5 * 1024 * 1024;
+
+/** Uploads a poster (multipart, so not through api()), with the same one silent token refresh on 401. */
+async function sendPoster(filmId, file, retried = false) {
+	const body = new FormData();
+	body.append('file', file);
+	const res = await fetch(`/api/admin/films/${filmId}/poster`, { method: 'PUT', body,
+		headers: { Authorization: `Bearer ${state.accessToken}` } });
+	if (res.status === 401 && !retried && (await refreshSession())) return sendPoster(filmId, file, true);
+	const data = await res.json().catch(() => null);
+	if (!res.ok) throw new Error(data?.detail || `The upload failed (${res.status})`);
+	return data;
+}
 
 const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : 0);
 
@@ -805,7 +819,16 @@ export async function renderFilms(params) {
 			<p class="form-error" id="film-error" role="alert" hidden></p>
 			<div class="row"><button class="btn btn-primary" id="film-save">Create film</button>
 				<button type="button" class="btn btn-ghost" id="film-cancel" hidden>Cancel editing</button></div>
-		</form>`;
+		</form>
+		<section class="card admin-form poster-box" id="poster-box" aria-labelledby="poster-h" hidden>
+			<h3 id="poster-h">Poster</h3>
+			<div class="row" id="poster-current"></div>
+			<label>New poster <input type="file" id="poster-file" accept="image/jpeg,image/png" aria-describedby="poster-help"></label>
+			<p class="muted small" id="poster-help">A JPEG or PNG up to 5 MB, at least 200 pixels a side. It is cropped to 2:3 around the centre.</p>
+			<p class="form-error" id="poster-error" role="alert" hidden></p>
+			<div class="row"><button type="button" class="btn btn-primary" id="poster-upload">Upload poster</button>
+				<button type="button" class="btn btn-ghost" id="poster-remove">Remove poster</button></div>
+		</section>`;
 
 	const form = document.getElementById('film-form');
 	const error = document.getElementById('film-error');
@@ -821,6 +844,53 @@ export async function renderFilms(params) {
 		form.certificate.value = film?.certificate ?? '';
 		form.synopsis.value = film?.synopsis ?? '';
 		error.hidden = true;
+		showPoster();
+	};
+	// The poster belongs to a film that exists: shown while editing one
+	const showPoster = () => {
+		document.getElementById('poster-box').hidden = !editing;
+		if (!editing) return;
+		document.getElementById('poster-current').innerHTML = `${posterImage(editing, 'small')}
+			<span class="muted small">${editing.posterUrl ? 'Current poster' : 'No poster yet: the film shows its initials'}</span>`;
+		document.getElementById('poster-remove').hidden = !editing.posterUrl;
+		document.getElementById('poster-file').value = '';
+		document.getElementById('poster-error').hidden = true;
+	};
+	const posterError = (message) => {
+		const box = document.getElementById('poster-error');
+		box.textContent = message;
+		box.hidden = false;
+	};
+	document.getElementById('poster-upload').onclick = async () => {
+		const file = document.getElementById('poster-file').files[0];
+		if (!file) { posterError('Choose a JPEG or PNG first.'); document.getElementById('poster-file').focus(); return; }
+		if (file.size > MAX_POSTER_BYTES) { posterError('That file is over 5 MB.'); return; }
+		const button = document.getElementById('poster-upload');
+		button.disabled = true;
+		try {
+			const result = await sendPoster(editing.id, file);
+			editing = { ...editing, posterUrl: `/api/films/${editing.id}/poster?v=${result.posterVersion}` };
+			showPoster();
+			toast(`Poster of ${editing.title} uploaded`);
+			await load();
+		} catch (e) {
+			posterError(e.message);
+		} finally {
+			button.disabled = false;
+		}
+	};
+	document.getElementById('poster-remove').onclick = async () => {
+		if (!confirm(`Remove the poster of ${editing.title}?`)) return;
+		try {
+			await api(`/api/admin/films/${editing.id}/poster`, { method: 'DELETE', auth: true });
+			editing = { ...editing, posterUrl: null };
+			showPoster();
+			toast(`Poster of ${editing.title} removed`);
+			document.getElementById('poster-file').focus();
+			await load();
+		} catch (e) {
+			posterError(e.message);
+		}
 	};
 	document.getElementById('film-cancel').onclick = () => { setMode(null); form.title.focus(); };
 
@@ -874,8 +944,9 @@ export async function renderFilms(params) {
 		}
 		box.innerHTML = `
 			<div class="card table-wrap" tabindex="0" role="region" aria-label="Films"><table class="table">
-				<thead><tr><th>Title</th><th>Runtime</th><th>Language</th><th>Certificate</th><th>Rating</th><th class="num">Shows</th><th><span class="sr-only">Action</span></th></tr></thead>
+				<thead><tr><th><span class="sr-only">Poster</span></th><th>Title</th><th>Runtime</th><th>Language</th><th>Certificate</th><th>Rating</th><th class="num">Shows</th><th><span class="sr-only">Action</span></th></tr></thead>
 				<tbody>${result.content.map((f) => `<tr>
+					<td>${posterImage(f, 'small')}</td>
 					<td><strong tabindex="-1" data-film="${f.id}">${esc(f.title)}</strong></td>
 					<td>${esc(runtimeText(f.runtimeMinutes))}</td>
 					<td>${esc(f.language ?? '')}</td>
