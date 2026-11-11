@@ -8,7 +8,8 @@ import java.util.List;
 
 /** A film on the home page: its rating, how many screenings are coming up, the next few, and the cheapest seat. */
 public record FilmCardResponse(Long id, String title, int runtimeMinutes, String language, String certificate,
-		Double ratingAverage, int ratingCount, int upcomingShows, BigDecimal fromPrice, List<ShowSlot> nextShows) {
+		Double ratingAverage, int ratingCount, int upcomingShows, BigDecimal fromPrice, List<ShowSlot> nextShows,
+		String posterUrl) {
 
 	public static final int NEXT_SHOWS = 3;
 
@@ -16,6 +17,6 @@ public record FilmCardResponse(Long id, String title, int runtimeMinutes, String
 		BigDecimal from = upcoming.stream().map(ShowSlot::fromPrice).min(BigDecimal::compareTo).orElse(null);
 		return new FilmCardResponse(film.getId(), film.getTitle(), film.getRuntimeMinutes(), film.getLanguage(),
 				film.getCertificate(), ReviewRules.average(film.getRatingSum(), film.getRatingCount()),
-				film.getRatingCount(), upcoming.size(), from, upcoming.stream().limit(NEXT_SHOWS).toList());
+				film.getRatingCount(), upcoming.size(), from, upcoming.stream().limit(NEXT_SHOWS).toList(), film.posterUrl());
 	}
 }

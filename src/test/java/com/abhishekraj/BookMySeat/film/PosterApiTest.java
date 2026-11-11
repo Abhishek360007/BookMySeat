@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 import javax.imageio.ImageIO;
@@ -24,9 +25,14 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -128,6 +134,35 @@ class PosterApiTest {
 		}
 		assertThat(posterRepository.count()).isZero();
 		assertThat(filmRepository.findById(filmId).orElseThrow().getPosterVersion()).isNull();
+	}
+
+	@Test
+	void anyoneGetsThePoster_byItsVersionedUrl_cachedForAYear() throws Exception {
+		mvc.perform(get("/api/films/" + filmId + "/poster")).andExpect(status().isNotFound());
+		mvc.perform(get("/api/films/" + filmId)).andExpect(jsonPath("$.posterUrl", nullValue()));
+
+		String version = JsonPath.read(upload(admin, "p.png", PosterImagesTest.image("png", 400, 600,
+				BufferedImage.TYPE_INT_RGB, Color.RED)).andReturn().getResponse().getContentAsString(), "$.posterVersion");
+		String url = "/api/films/" + filmId + "/poster?v=" + version;
+		mvc.perform(get("/api/films/" + filmId)).andExpect(jsonPath("$.posterUrl").value(url));
+		mvc.perform(get("/api/admin/films?q=Poster Film").header("Authorization", "Bearer " + admin))
+				.andExpect(jsonPath("$.content[0].posterUrl").value(url));
+
+		MvcResult result = mvc.perform(get(url)) // no login needed
+				.andExpect(status().isOk())
+				.andExpect(content().contentType(MediaType.IMAGE_JPEG))
+				.andExpect(header().string("ETag", "\"" + version + "\""))
+				.andExpect(header().string("Cache-Control", containsString("max-age=31536000")))
+				.andExpect(header().string("Cache-Control", containsString("immutable")))
+				.andReturn();
+		assertThat(ImageIO.read(new ByteArrayInputStream(result.getResponse().getContentAsByteArray())).getWidth()).isEqualTo(480);
+		// The browser already has it: 304, no body
+		mvc.perform(get(url).header("If-None-Match", "\"" + version + "\""))
+				.andExpect(status().isNotModified());
+
+		mvc.perform(delete("/api/admin/films/" + filmId + "/poster").header("Authorization", "Bearer " + admin));
+		mvc.perform(get("/api/films/" + filmId)).andExpect(jsonPath("$.posterUrl", nullValue()));
+		mvc.perform(get(url)).andExpect(status().isNotFound());
 	}
 
 	ResultActions upload(String token, String name, byte[] content) throws Exception {

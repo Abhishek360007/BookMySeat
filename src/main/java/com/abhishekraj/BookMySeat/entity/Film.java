@@ -59,6 +59,11 @@ public class Film {
 		this.createdAt = now;
 	}
 
+	/** Where the poster is served, with its version (a new poster, a new URL); null without one. */
+	public String posterUrl() {
+		return posterVersion == null ? null : "/api/films/" + id + "/poster?v=" + posterVersion;
+	}
+
 	public Duration runtime() {
 		return Duration.ofMinutes(runtimeMinutes);
 	}
