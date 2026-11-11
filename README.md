@@ -37,7 +37,7 @@
 - **E-tickets with QR check-in:** every booking gets an HMAC-signed ticket code, shown as a QR code in the web app and attached to the confirmation email. Staff scan it at the door with a phone camera; it gets in exactly once, even with 10 scanners reading it at the same moment.
 - **Waitlist for sold-out shows:** customers join the line for 1 to 6 seats. When a booking is cancelled, the freed seats are held in Redis for the first person whose request fits, for 15 minutes, before the cancel even commits, so nobody can grab them in between. They get an email, book the seats like any other held seats, and an offer that runs out or is declined goes to the next person. See [Waitlist](#waitlist).
 - **Promo codes:** percentage or fixed discounts with total and per-person limits that hold under parallel bookings (each use is counted under the code's row lock; 12 people racing for 5 uses get exactly 5), a use reserved for a Razorpay order and given back when it expires, is refunded or the booking is cancelled, and the discount kept on the booking like its price. See [Promo codes](#promo-codes).
-- **Films and their screenings:** the home page lists films, each with its rating, runtime, the next showtime and the cheapest seat; a film's page has its showtimes by day (in your city) and its reviews. Shows join a film by id or by title (created on the fly, one per title even when several shows are created at once), and the runtime ends the calendar event and times the review email. See [Films](#films).
+- **Films and their screenings:** the home page lists films, each with its poster, rating, runtime, the next showtime and the cheapest seat; a film's page has its showtimes by day (in your city) and its reviews. Shows join a film by id or by title (created on the fly, one per title even when several shows are created at once), and the runtime ends the calendar event and times the review email. See [Films](#films).
 - **Reviews from people who went:** a rating from 1 to 5 and an optional text, only with a confirmed booking for a screening that has started, one per person per film whichever screening they saw. The average sits on the film itself, kept exact by atomic updates in the review's transaction (6 saves by one person and 8 people at once give one review each and the right sum; the test fails without the lock), a "How was it?" email after the show, and admin moderation. See [Reviews](#reviews).
 - **Accessible web app:** an axe-core audit of every page (WCAG 2.2 AA, phone and desktop, light and dark, 320 px wide) passes with no violations, and a browser test books seats with the keyboard alone: the seat map is one Tab stop with arrow keys, focus survives the live refresh, and screen readers hear about holds and waitlist offers. See [Accessibility](#accessibility).
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
@@ -325,6 +325,9 @@ flowchart LR
 | Renaming a film? | Its shows take the new title in the same transaction (tickets, emails and bookings read it there), and the cached shows are cleared |
 | Can a show change film? | Not once it has bookings: its customers booked that film and their reviews count for it (`409`, like moving venue) |
 | And the runtime? | The calendar event ends at the start plus the runtime, and the "How was it?" email goes out 30 minutes after that |
+| Posters? | An admin uploads a JPEG or PNG (at most 5 MB) on the Films page; whatever comes in is stored as a 480 × 720 JPEG, cropped to 2:3 around the centre (`PosterImages`, plain Java with ImageIO, unit-tested). The type is read from the file's first bytes, not its name: a text file called `poster.png` is a `415`. The size is read from the header before decoding, and the image is decoded with subsampling (every n-th pixel), so even an 8000-pixel upload takes a few MB of memory on the 512 MB instance. Re-encoding drops the metadata (camera, location) |
+| Where do they live? | In Postgres, in their own table (`film_posters`, V24), so listing films never reads an image; `films.poster_version` says there is one. `GET /api/films/{id}/poster` serves it with an ETag (`304` when unchanged) and a year of `immutable` caching, which is safe because the URL in every film carries the poster's version: a new poster is a new URL. At this size (about 40 KB each) a database is fine; object storage and a CDN would come with many more |
+| No poster? | The card and the film page show the film's initials instead. The demo's made-up films have posters drawn in HTML and CSS ([`scripts/posters/make-posters.mjs`](scripts/posters/make-posters.mjs)); "Dune: Part Three" is a real film and keeps its initials |
 | Existing shows? | V22 made one film per title (ignoring case) with 180 minutes, the length assumed until then, moved the ratings from the shows to the films (counted again from the reviews) and kept the newest review where someone had reviewed two screenings of one film. The shows' own rating columns stay for one release, because the previous version still reads them for a moment during the deploy |
 
 ## Reviews
@@ -463,7 +466,8 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | DELETE | `/api/waitlist/{showId}` | User | Leave the waitlist (with an offer: decline it; the seats go to the next person) |
 | GET | `/api/waitlist/me` | User | Your places in line: `WAITING` with your position, or `OFFERED` with the held seats and when the offer ends |
 | GET | `/api/films?q=&city=&page=&size=` | Public | Films with a screening coming up, soonest first: rating, runtime, number of showtimes, the next three and the cheapest seat |
-| GET | `/api/films/{id}` | Public | A film with its details, rating and every screening still to come |
+| GET | `/api/films/{id}` | Public | A film with its details, rating, `posterUrl` and every screening still to come |
+| GET | `/api/films/{id}/poster?v=` | Public | The film's poster (480 × 720 JPEG), cached for a year by its versioned URL; `304` with `If-None-Match` |
 | GET | `/api/films/{filmId}/reviews?sort=newest\|highest&page=&size=` | Public | A film's visible reviews (author as "Asha K."); its average and count are on the film and on each of its shows (`ratingAverage`, `ratingCount`) |
 | PUT | `/api/films/{filmId}/reviews/me` | User | Write or edit your review: `{rating, text?}`; needs a confirmed booking for one of its screenings that has started (`409` with the `reason` otherwise) |
 | DELETE | `/api/films/{filmId}/reviews/me` | User | Delete your review |
@@ -481,6 +485,7 @@ Interactive docs: `/swagger-ui.html` (use **Authorize** to paste a JWT).
 | POST | `/api/admin/promo-codes/{id}/disable`, `/enable` | Admin | Switch a code off or on; bookings made with it keep their discount |
 | GET | `/api/admin/films?q=&page=&size=` | Admin | Films with how many shows each has |
 | POST / PUT | `/api/admin/films`, `/api/admin/films/{id}` | Admin | Create or edit a film (title unique ignoring case; a new title is carried to its shows) |
+| PUT / DELETE | `/api/admin/films/{id}/poster` | Admin | Upload a poster (multipart `file`, JPEG or PNG up to 5 MB; `415`, `422` or `413` with the reason when it can't be one) or remove it |
 | GET | `/api/admin/reviews?hidden=&page=&size=` | Admin | Reviews with their show and author, newest first |
 | POST | `/api/admin/reviews/{id}/hide`, `/unhide` | Admin | Hide a review (not listed, not in the average) or show it again |
 
@@ -526,7 +531,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 
 | Feature | Detail |
 |---|---|
-| Films | The home page lists the films showing (title and city filters, paginated); a film's page has its synopsis, showtimes by day (keeping the city searched) and reviews; the seat map links back to the film |
+| Films | The home page lists the films showing with their posters (title and city filters, paginated); a film's page has its poster, synopsis, showtimes by day (keeping the city searched) and reviews; the seat map links back to the film. Posters are decorative (`alt=""`, the title is beside them), lazy-loaded, with their size reserved so nothing jumps; a film without one shows its initials |
 | Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Pick best seats | Choose how many seats (and a type) and the server picks and holds the best ones together; which seats is announced, and a show without that many together says so |
@@ -535,7 +540,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 | Waitlist | A sold-out show offers **Join waitlist** (1 to 6 seats) and then shows your place in line; an offer appears within one refresh as held seats with a countdown, to book or **Decline**. My bookings lists your places in line |
 | Payments | When payments are on, **Pay** opens Razorpay Checkout and the page verifies the result (the webhook confirms too, even if the tab is closed) |
 | Sessions | Access token in memory only; the refresh token in `sessionStorage`, renewed automatically on a `401` |
-| Admin pages | Dashboard, new show form, a page per show, **Films** (newest first with a title search, 20 a page; create and edit, with their number of shows), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
+| Admin pages | Dashboard, new show form, a page per show, **Films** (newest first with a title search, 20 a page; create and edit, with their number of shows; upload or remove a poster), **Promo codes** (create codes with a live example of the discount, see their uses, switch them off) and **Reviews** (all, visible or hidden; hide or show again) for admins (see [Admin dashboard](#admin-dashboard)) |
 | Reviews | The film's page and its screenings carry the average ("★ 4.3 · 12 reviews") and list the reviews, newest or highest rated first. After the start, My bookings swaps **Cancel** for **Rate this film** (or your stars, to edit). The review page is a 5-star radio group (arrow keys work, lit stars are filled and the others outlined, so not only the colour tells them apart) and an optional text |
 | E-tickets | A **Ticket** button on each booking: QR code, seats and code, and "checked in" once scanned. **Add to calendar** on the ticket and in My bookings downloads the `.ics` (with the login token, so through a `blob:` URL) |
 | Check-in (admins) | Pick the show, then scan tickets with the phone camera or type the code; a big green or red answer and a live "12 of 40 checked in" counter |
@@ -765,7 +770,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 | Left out | Why |
 |---|---|
 | Real payments | Razorpay runs in test mode: a public demo shouldn't take money. Switching to live keys is configuration, not code |
-| Film posters and trailers | They need file storage and a CDN; the Content-Security-Policy only allows the app's own images today |
+| Trailers | Video needs object storage and a CDN; posters are small enough for the database (see [Films](#films)) |
 | Several cinema chains, seat maps per screen | A venue has one hall, and each show generates its own seat map |
 | Instant wake-up | Render's free tier sleeps after 15 idle minutes and takes 2 to 3 minutes to wake; the start page shows the wait. A paid instance stays awake |
 
