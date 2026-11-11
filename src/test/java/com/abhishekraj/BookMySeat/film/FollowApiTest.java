@@ -130,6 +130,75 @@ class FollowApiTest {
 		assertThat(jdbc.queryForObject("select count(*) from film_follows where film_id = ?", Integer.class, filmId)).isEqualTo(1);
 	}
 
+	@Test
+	void newShowtimes_areAnnouncedToFollowers_once_inOneEmail_afterTheGracePeriod() throws Exception {
+		long followed = film("Announced Film");
+		long unfollowed = film("Nobody Follows");
+		String second = registerAndLogin("follower-two@example.com", "Gita");
+		registerAndLogin("not-following@example.com", "Hari");
+		follow(user, followed);
+		follow(second, followed);
+		jdbc.update("delete from email_outbox");
+
+		long first = show(followed, 3);
+		long sooner = show(followed, 2);
+		long cancelled = show(followed, 4);
+		adminCall(post("/api/shows/" + cancelled + "/cancel"), "").andExpect(status().isOk());
+		long other = show(unfollowed, 2);
+
+		// Just created: an admin may still fix them, so nobody is told yet
+		assertThat(announcements.announceDue()).isZero();
+		createdAgo("20 minutes", first, sooner, cancelled, other);
+
+		assertThat(announcements.announceDue()).isEqualTo(2); // one email to each follower
+		List<String> recipients = jdbc.queryForList("select recipient from email_outbox where kind = 'NEW_SHOWTIMES'", String.class);
+		assertThat(recipients).containsExactlyInAnyOrder("follower-two@example.com", "follower@example.com");
+		String body = jdbc.queryForObject("select body_text from email_outbox where recipient = 'follower@example.com'", String.class);
+		String subject = jdbc.queryForObject("select subject from email_outbox where recipient = 'follower@example.com'", String.class);
+		assertThat(subject).isEqualTo("New showtimes for Announced Film");
+		assertThat(body).contains("Hi Farah", "Announced Film has 2 new showtimes:", "Follow Hall, Pune", "from ₹200.00",
+				"/#/film/" + followed, "To stop, open the film's page and press Following");
+		assertThat(body.indexOf(when(sooner))).isEqualTo(body.indexOf("- ") + 2); // the soonest is listed first
+		// Every show was looked at, the cancelled one and the unfollowed film's too, and nothing is told twice
+		assertThat(jdbc.queryForObject("select count(*) from shows where followers_notified_at is null and id in (?, ?, ?, ?)",
+				Integer.class, first, sooner, cancelled, other)).isZero();
+		assertThat(announcements.announceDue()).isZero();
+
+		// A later showtime: just that one
+		long later = show(followed, 9);
+		createdAgo("20 minutes", later);
+		jdbc.update("delete from email_outbox");
+		assertThat(announcements.announceDue()).isEqualTo(2);
+		assertThat(jdbc.queryForObject("select body_text from email_outbox where recipient = 'follower@example.com'", String.class))
+				.contains("Announced Film has a new showtime:");
+	}
+
+	@Test
+	void showsThatExistedBeforeV25_areNotNews() throws Exception {
+		long filmId = film("Old News");
+		follow(user, filmId);
+		long old = show(filmId, 2);
+		// As V25 left existing shows: already told
+		jdbc.update("update shows set followers_notified_at = now(), created_at = now() - interval '1 day' where id = ?", old);
+		jdbc.update("delete from email_outbox");
+		assertThat(announcements.announceDue()).isZero();
+	}
+
+	@Autowired com.abhishekraj.BookMySeat.service.ShowAnnouncements announcements;
+
+	void createdAgo(String interval, long... showIds) {
+		for (long id : showIds) {
+			jdbc.update("update shows set created_at = now() - interval '" + interval + "' where id = ?", id);
+		}
+	}
+
+	/** The start time as the email writes it ("Fri 18 Dec 2027, 7:00 pm"), to find it in the text. */
+	String when(long showId) {
+		Instant start = jdbc.queryForObject("select start_time from shows where id = ?", java.sql.Timestamp.class, showId).toInstant();
+		return java.time.format.DateTimeFormatter.ofPattern("EEE d MMM yyyy, h:mm a", java.util.Locale.ENGLISH)
+				.format(start.atZone(java.time.ZoneId.of("Asia/Kolkata"))).replace("AM", "am").replace("PM", "pm");
+	}
+
 	// ---- helpers ----
 
 	ResultActions follow(String token, long filmId) throws Exception {

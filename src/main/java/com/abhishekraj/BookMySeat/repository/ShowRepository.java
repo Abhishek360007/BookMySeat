@@ -45,6 +45,18 @@ public interface ShowRepository extends JpaRepository<Show, Long>, JpaSpecificat
 	@Query("select s.film.id, count(s) from Show s where s.film.id in :filmIds group by s.film.id")
 	List<Object[]> countByFilmIds(Collection<Long> filmIds);
 
+	// Films with shows created before the cutoff whose followers haven't been told yet (partial index V25)
+	@Query(value = """
+			SELECT DISTINCT film_id FROM shows WHERE followers_notified_at IS NULL AND created_at <= :cutoff
+			ORDER BY film_id LIMIT :limit""", nativeQuery = true)
+	List<Long> findFilmsToAnnounce(Instant cutoff, int limit);
+
+	// SKIP LOCKED: shows another run is announcing right now are left to it
+	@Query(value = """
+			SELECT * FROM shows WHERE film_id = :filmId AND followers_notified_at IS NULL AND created_at <= :cutoff
+			ORDER BY start_time, id FOR UPDATE SKIP LOCKED""", nativeQuery = true)
+	List<Show> lockToAnnounce(Long filmId, Instant cutoff);
+
 	// A film renamed: its shows carry the new title
 	@Modifying
 	@Query("update Show s set s.title = :title where s.film.id = :filmId")

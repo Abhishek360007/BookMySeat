@@ -1,6 +1,7 @@
 package com.abhishekraj.BookMySeat.notification;
 
 import com.abhishekraj.BookMySeat.entity.Booking;
+import com.abhishekraj.BookMySeat.entity.Film;
 import com.abhishekraj.BookMySeat.entity.Payment;
 import com.abhishekraj.BookMySeat.entity.Seat;
 import com.abhishekraj.BookMySeat.entity.Show;
@@ -18,7 +19,9 @@ import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
 
@@ -227,6 +230,38 @@ public class EmailTemplates {
 				esc(booking.getUser().getName()), esc(show.getTitle()), esc(show.getVenue().getName()),
 				when(show.getStartTime()), button("Rate " + show.getTitle(), link)));
 		return new EmailMessage(booking.getUser().getEmail(), subject, text, html);
+	}
+
+	/** A followed film got new showtimes: each with its venue and cheapest seat, and how to stop following. */
+	public EmailMessage newShowtimes(User user, Film film, List<Show> shows) {
+		String link = url("film/" + film.getId());
+		String count = shows.size() == 1 ? "a new showtime" : shows.size() + " new showtimes";
+		String subject = "New showtimes for " + film.getTitle();
+		String lines = shows.stream().map(show -> "- " + when(show.getStartTime()) + " · " + show.getVenue().getName() + ", "
+				+ show.getVenue().getCity() + " · from " + money(Collections.min(show.allPrices().values())))
+				.collect(Collectors.joining("\n"));
+		String text = """
+				Hi %s,
+
+				%s has %s:
+				%s
+
+				Book here: %s
+
+				You get this because you follow %s. To stop, open the film's page and press Following.
+				""".formatted(user.getName(), film.getTitle(), count, lines, link, film.getTitle());
+		String items = shows.stream().map(show -> "<li><b>" + when(show.getStartTime()) + "</b> · "
+				+ esc(show.getVenue().getName()) + ", " + esc(show.getVenue().getCity()) + " · from "
+				+ money(Collections.min(show.allPrices().values())) + "</li>").collect(Collectors.joining());
+		String html = layout("New showtimes", """
+				<p>Hi %s,</p>
+				<p><b>%s</b> has %s:</p>
+				<ul>%s</ul>
+				%s
+				<p style="color:#646779">You get this because you follow %s. To stop, open the film's page and press Following.</p>"""
+				.formatted(esc(user.getName()), esc(film.getTitle()), count, items, button("See the showtimes", link),
+						esc(film.getTitle())));
+		return new EmailMessage(user.getEmail(), subject, text, html);
 	}
 
 	public EmailMessage paymentRefunded(Payment payment) {

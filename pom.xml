@@ -227,10 +227,11 @@
 					     (e.g. the legacy "Asia/Calcutta"), which newer Postgres rejects.
 					     @{argLine} keeps the JaCoCo agent that prepare-agent puts there. -->
 					<argLine>@{argLine} -Duser.timezone=UTC</argLine>
-					<!-- Tests that move a show into the past must not get "How was it?" emails from the job;
-					     ReviewRequestTest runs it itself -->
+					<!-- The emailing jobs stay out of the way of every test (one that moves a show into the past must
+					     not get a "How was it?" email); ReviewRequestTest and FollowApiTest run them by hand -->
 					<systemPropertyVariables>
 						<reviews.request.initial-delay>P1D</reviews.request.initial-delay>
+						<showtimes.announce.initial-delay>P1D</showtimes.announce.initial-delay>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>
