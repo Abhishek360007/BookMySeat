@@ -184,10 +184,13 @@ try {
 	await audit(page, 'show with reviews', () => page.locator('.review').first().waitFor());
 	await page.goto(`${BASE}/#/film/${show.filmId}`);
 	await audit(page, 'film with showtimes', () => page.locator('.slot').first().waitFor());
+	// Followed: the toggle pressed, and the film listed in My bookings (audited below)
+	await page.getByRole('button', { name: 'Follow this film' }).click();
+	await audit(page, 'film, followed', () => page.locator('#follow-btn[aria-pressed="true"]').waitFor());
 	await page.goto(`${BASE}/#/film/${started.filmId}`);
 	await audit(page, 'film with reviews', () => page.locator('.review').first().waitFor());
 	await page.goto(`${BASE}/#/bookings`);
-	await audit(page, 'my bookings', () => page.locator('#waitlist').waitFor());
+	await audit(page, 'my bookings', () => page.locator('#following').waitFor());
 	await page.goto(`${BASE}/#/ticket/${booking.id}`);
 	await audit(page, 'ticket', () => page.locator('img.qr').waitFor());
 	await page.goto(`${BASE}/#/account`);
@@ -220,6 +223,8 @@ try {
 	await audit(adminPage, 'admin reviews', () => adminPage.locator('[data-review]').first().waitFor());
 	await adminPage.goto(`${BASE}/#/admin/films`);
 	await audit(adminPage, 'admin films', () => adminPage.locator('[data-edit]').first().waitFor());
+	await adminPage.locator('[data-edit]').first().click();
+	await audit(adminPage, 'admin film with its poster', () => adminPage.locator('#poster-box:not([hidden])').waitFor());
 	await adminContext.close();
 } catch (error) {
 	failed = `step failed: ${error.message.split('\n')[0]}`;
