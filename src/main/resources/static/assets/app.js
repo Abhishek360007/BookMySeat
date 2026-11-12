@@ -1419,10 +1419,21 @@ function route() {
 	return routing;
 }
 
+/** The top bar link of the section you're in is marked (aria-current), so it is clear where you are. */
+function markNav(path) {
+	const section = path.startsWith('/admin') ? '#/admin' : path.startsWith('/bookings') || path.startsWith('/ticket') ? '#/bookings'
+		: path.startsWith('/account') ? '#/account' : '#/';
+	document.querySelectorAll('.nav a').forEach((link) => {
+		if (link.getAttribute('href') === section) link.setAttribute('aria-current', 'page');
+		else link.removeAttribute('aria-current');
+	});
+}
+
 async function renderRoute() {
 	stopTimers();
 	const hash = location.hash || '#/';
 	const [path, query = ''] = hash.slice(1).split('?');
+	markNav(path);
 	try {
 		const show = path.match(/^\/show\/(\d+)$/);
 		const verify = path.match(/^\/verify\/([A-Za-z0-9_-]+)$/);
