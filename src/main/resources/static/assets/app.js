@@ -341,9 +341,12 @@ async function renderFilm(filmId, params) {
 		: false;
 	app.innerHTML = `
 		<a href="#/${city ? `?city=${encodeURIComponent(city)}` : ''}" class="small">← All films</a>
+		<div class="film-hero">
+		${film.posterUrl ? `<img class="hero-backdrop" src="${esc(film.posterUrl)}" alt="" aria-hidden="true">` : ''}
 		<div class="film-head">
 			${posterImage(film, 'large')}
 			<div>
+				<p class="eyebrow">Film</p>
 				<h1>${esc(film.title)}</h1>
 				<p class="muted">${filmFacts(film)}</p>
 				${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
@@ -354,13 +357,14 @@ async function renderFilm(filmId, params) {
 				</div>
 			</div>
 		</div>
+		</div>
 		<section aria-labelledby="showtimes-h">
 			<h2 id="showtimes-h">Showtimes${city ? ` in ${esc(city)}` : ''}</h2>
 			${shows.length === 0 ? `<p class="muted">No showtimes coming up${city ? ` in ${esc(city)}. <a href="#/film/${film.id}">See every city</a>` : '.'}</p>` : days.map((d) => `
 				<h3 class="day">${esc(d)}</h3>
 				<ul class="slots">${shows.filter((s) => dayOf(s) === d).map((s) => `
 					<li><a class="card slot" href="#/show/${s.showId}">
-						<strong>${esc(time.format(new Date(s.startTime)))}</strong>
+						<strong class="slot-time">${esc(time.format(new Date(s.startTime)))}</strong>
 						<span class="small">${esc(s.venueName)}, ${esc(s.city)}</span>
 						<span class="small muted">from ${esc(money.format(s.fromPrice))}</span></a></li>`).join('')}</ul>`).join('')}
 		</section>
