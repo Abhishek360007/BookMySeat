@@ -180,6 +180,16 @@ a.who:hover { color: var(--accent); }
 /* Cards and lists */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
 .search { display: grid; grid-template-columns: 2fr 1fr auto; gap: .5rem; margin-bottom: 1rem; }
+/* Home: a short welcome with the search in a raised bar */
+.hero { padding: 12px 0 8px; margin-bottom: 20px; }
+.hero h1 { font-size: clamp(2.1rem, 1.4rem + 3vw, 3.4rem); margin-bottom: .6rem; }
+.hero-lead { color: var(--muted); font-size: 1.08rem; max-width: 58ch; margin: 0 0 1.25rem; }
+.hero .search {
+	background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px; max-width: 760px;
+	box-shadow: var(--shadow); margin: 0;
+}
+.hero .search input { border-color: transparent; background: transparent; border-radius: 999px; }
+.hero .search input:focus { background: var(--surface-2); }
 input, select, textarea {
 	font: inherit; color: var(--text); background: var(--surface-2);
 	border: 1px solid var(--border); border-radius: 10px; padding: .6rem .85rem; width: 100%;
@@ -209,10 +219,23 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .shows { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .show-card { display: flex; flex-direction: column; gap: .25rem; text-decoration: none; color: inherit; transition: border-color .15s; }
 .show-card:hover { border-color: var(--accent); }
-.show-card .title { font-weight: 650; font-size: 1.1rem; }
+.show-card .title { font-weight: 700; font-size: 1.1rem; letter-spacing: -.01em; line-height: 1.3; }
 /* Posters: always 2:3 (the server crops them so), a placeholder with the initials when there is none */
 .film-card { flex-direction: row; align-items: flex-start; gap: 12px; }
 .film-card-body { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+/* Home: a grid of posters, the details under each one */
+.film-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 22px; }
+.film-grid .film-card { flex-direction: column; gap: 0; padding: 0; overflow: hidden; transition: transform .2s, box-shadow .2s, border-color .2s; }
+.film-grid .film-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lift); border-color: var(--accent); }
+.film-grid .film-card-body { padding: 14px 16px 16px; gap: .3rem; flex: 1; }
+.film-grid .price { margin-top: auto; padding-top: .35rem; font-size: .92rem; }
+.poster-frame { position: relative; display: block; overflow: hidden; }
+.poster-frame::after { /* a dark fade at the foot of the poster, like the end of a reel */
+	content: ''; position: absolute; inset: auto 0 0 0; height: 30%; background: linear-gradient(transparent, rgb(0 0 0 / .35)); pointer-events: none;
+}
+.poster.cover { width: 100%; border-radius: 0; transition: transform .35s ease; }
+.film-card:hover .poster.cover { transform: scale(1.04); }
+.poster.cover.placeholder { font-size: 3.2rem; border: 0; }
 .poster { display: block; flex: none; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 8px; background: var(--seat-free); }
 .poster.thumb { width: 88px; }
 .poster.large { width: 200px; }
@@ -408,6 +431,10 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (max-width: 560px) {
 	.search { grid-template-columns: 1fr; }
+	.hero .search { border-radius: var(--radius); }
+	.film-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+	.film-grid .film-card-body { padding: 10px 12px 12px; }
+	.film-grid .show-card .title { font-size: 1rem; }
 	.card { padding: 12px; }
 	/* 10 seats + the row label must fit a 360px-wide phone */
 	.seatmap, .seat-row { gap: 4px; }

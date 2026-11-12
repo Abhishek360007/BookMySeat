@@ -274,12 +274,16 @@ async function renderHome(params) {
 	const city = params.get('city') || '';
 	const page = Number(params.get('page') || 0);
 	app.innerHTML = `
-		<h1>Now booking</h1>
-		<form class="search" id="search">
-			<input name="q" placeholder="Search films" value="${esc(q)}" aria-label="Search films">
-			<input name="city" placeholder="City" value="${esc(city)}" aria-label="City">
-			<button class="btn btn-primary">Search</button>
-		</form>
+		<section class="hero">
+			<p class="eyebrow">In cinemas</p>
+			<h1>Now booking</h1>
+			<p class="hero-lead">Pick a film, choose your seats on a live map and they are yours for ${esc(state.config.holdMinutes)} minutes while you pay. Nobody else can take them.</p>
+			<form class="search" id="search" role="search">
+				<input name="q" placeholder="Search films" value="${esc(q)}" aria-label="Search films">
+				<input name="city" placeholder="City" value="${esc(city)}" aria-label="City">
+				<button class="btn btn-primary">Search</button>
+			</form>
+		</section>
 		<div id="results"><p class="muted">Loading films…</p></div>`;
 
 	document.getElementById('search').onsubmit = (event) => {
@@ -300,15 +304,15 @@ async function renderHome(params) {
 	}
 	// The link's name is the film's title; the rest of the card is read after it
 	box.innerHTML = `
-		<div class="shows">
+		<div class="shows film-grid">
 			${results.content.map((film) => `
 				<a class="card show-card film-card" href="#/film/${film.id}${city ? `?city=${encodeURIComponent(city)}` : ''}">
-					${posterImage(film, 'thumb')}
+					<span class="poster-frame">${posterImage(film, 'cover')}</span>
 					<span class="film-card-body">
 						<span class="title">${esc(film.title)}</span>
 						<span class="muted small">${filmFacts(film)}</span>
 						${ratingSummary(film)}
-						<span>Next: ${esc(when.format(new Date(film.nextShows[0].startTime)))} · ${esc(film.nextShows[0].venueName)}</span>
+						<span class="small">Next: ${esc(when.format(new Date(film.nextShows[0].startTime)))} · ${esc(film.nextShows[0].venueName)}</span>
 						<span class="price">${film.upcomingShows} showtime${film.upcomingShows > 1 ? 's' : ''} · from ${esc(money.format(film.fromPrice))}</span>
 					</span>
 				</a>`).join('')}
