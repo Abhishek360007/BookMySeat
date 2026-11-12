@@ -335,13 +335,24 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .timer.low { color: #fff; background: #b42318; animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { to { box-shadow: 0 0 0 4px color-mix(in srgb, #b42318 25%, transparent); } }
 
-/* Bookings */
+/* Bookings: a coloured edge says the state at a glance (the badge says it in words) */
 .bookings { display: grid; gap: 12px; }
-.status { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .15rem .5rem; border-radius: 999px; border: 1px solid; }
+.bookings > .card { border-left: 4px solid var(--border); transition: box-shadow .15s; }
+.bookings > .card:hover { box-shadow: var(--shadow-lift); }
+.bookings > .card:has(.status.CONFIRMED) { border-left-color: var(--ok); }
+.bookings > .card:has(.status.CANCELLED) { background: var(--surface-2); box-shadow: none; }
+.bookings > .card:has(.status.WAITING) { border-left-color: var(--gold); }
+.bookings > .card:has(.status.OFFERED) { border-left-color: var(--accent); }
+#following > .card { border-left-color: var(--accent); }
+.bookings strong { font-size: 1.05rem; }
+.status {
+	display: inline-block; font-size: .7rem; font-weight: 750; letter-spacing: .06em; padding: .18rem .6rem; border-radius: 999px;
+	border: 1px solid; background: color-mix(in srgb, currentColor 10%, transparent);
+}
 .status.CONFIRMED { color: var(--ok); }
 .status.CANCELLED { color: var(--muted); }
-.status.WAITING { color: var(--accent); }
-.status.OFFERED { color: var(--ok); }
+.status.WAITING { color: var(--gold); }
+.status.OFFERED { color: var(--accent); }
 
 /* Dialog, toasts, misc */
 dialog {
@@ -417,8 +428,16 @@ h3.day {
 .rating { font-size: .9rem; }
 .rating .star, .stars-read { color: var(--star); }
 .reviews { margin-top: 24px; }
-.review-list { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 10px; }
-.review { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.review-list { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.review-list { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.reviews select { width: auto; }
+.review {
+	position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px;
+	box-shadow: var(--shadow);
+}
+.review::before { /* a large quote mark, decoration only */
+	content: '“' / ''; position: absolute; right: 14px; top: 2px; font: 700 3rem/1 Georgia, serif; color: var(--accent); opacity: .18;
+}
 .review:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 .review-text { white-space: pre-line; overflow-wrap: anywhere; margin: .4rem 0 0; }
 .stars-read { letter-spacing: .05em; }
@@ -428,7 +447,8 @@ h3.day {
 .star-input legend { font-weight: 600; margin-bottom: .3rem; }
 .star-input .row { position: relative; }
 .star-input input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.star-input label { font-size: 2rem; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 6px; }
+.star-input label { font-size: 2.2rem; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 6px; transition: transform .12s, color .12s; }
+.star-input label:hover { transform: scale(1.15); }
 a.btn[aria-disabled="true"] { opacity: .5; pointer-events: none; }
 .star-input label.on { color: var(--star); }
 .star-input input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -494,7 +514,9 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .footer-links { display: flex; gap: 1rem; }
 .footer a { color: var(--muted); }
 .footer a:hover { color: var(--accent); }
-.empty { text-align: center; padding: 32px 16px; }
+.empty { text-align: center; padding: 40px 20px; }
+.empty p { color: var(--muted); font-size: 1.05rem; }
+.narrow.card, .card.narrow { margin-inline: auto; }
 
 @media (max-width: 560px) {
 	.search { grid-template-columns: 1fr; }
