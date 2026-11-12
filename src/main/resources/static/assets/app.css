@@ -95,19 +95,34 @@
 
 body {
 	margin: 0;
-	background: var(--bg);
+	/* A soft red glow from the top, like light from a screen; the plain colour fills the rest */
+	background: radial-gradient(120% 60% at 50% -10%, var(--bg-glow), transparent 60%) no-repeat, var(--bg);
 	color: var(--text);
-	font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	font: 16px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", sans-serif;
+	-webkit-font-smoothing: antialiased;
 	min-height: 100vh;
 	display: flex;
 	flex-direction: column;
 }
+::selection { background: var(--accent); color: var(--accent-text); }
 
-a { color: var(--accent); }
-h1, h2, h3 { line-height: 1.25; margin: 0 0 .5rem; }
+a { color: var(--accent); text-underline-offset: .18em; text-decoration-thickness: 1px; }
+a:hover { color: var(--accent-strong); }
+/* Headings: a tighter, heavier display face */
+h1, h2, h3 {
+	font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+	line-height: 1.2; margin: 0 0 .5rem; letter-spacing: -.015em; text-wrap: balance;
+}
+h1 { font-size: clamp(1.7rem, 1.2rem + 2vw, 2.4rem); font-weight: 750; letter-spacing: -.025em; }
+h2 { font-size: 1.35rem; font-weight: 700; margin-top: 1.75rem; }
+h3 { font-size: 1.05rem; font-weight: 650; }
+/* "← All films" and the like: small, quiet, above the page title */
+a.small:first-child { display: inline-block; margin-bottom: .75rem; color: var(--muted); text-decoration: none; }
+a.small:first-child:hover { color: var(--accent); }
+.eyebrow { font-size: .75rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0 0 .35rem; }
 
-.container { width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 16px; }
-main.container { flex: 1; padding-top: 24px; padding-bottom: 32px; }
+.container { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+main.container { flex: 1; padding-top: 28px; padding-bottom: 48px; }
 .muted { color: var(--muted); }
 .small { font-size: .875rem; }
 .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
@@ -126,8 +141,8 @@ main.container { flex: 1; padding-top: 24px; padding-bottom: 32px; }
 .nav a:hover { color: var(--accent); }
 /* Theme button: a moon in light mode, a sun in dark mode (decoration: the name is the hidden "Dark theme") */
 .btn-icon { width: 2.5rem; height: 2.5rem; padding: 0; display: inline-grid; place-items: center; }
-.theme-btn::before { content: '³E' / ''; font-size: 1.15rem; line-height: 1; }
-.theme-btn[aria-pressed="true"]::before { content: '°0' / ''; }
+.theme-btn::before { content: '☾' / ''; font-size: 1.15rem; line-height: 1; }
+.theme-btn[aria-pressed="true"]::before { content: '☀' / ''; }
 a.who { text-decoration: none; }
 a.who:hover { color: var(--accent); }
 .who { color: var(--muted); font-size: .875rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
