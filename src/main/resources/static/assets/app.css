@@ -275,17 +275,25 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .price { font-weight: 650; }
 .pager { margin-top: 1rem; }
 
-/* Seat map */
+/* Seat map: a dark room whatever the theme would be too much; the card gets a faint light from the screen instead */
+.auditorium { padding: 24px 16px 18px; background: radial-gradient(90% 55% at 50% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%), var(--surface); }
 .screen {
-	margin: 1.5rem auto .75rem; max-width: 420px; text-align: center; font-size: .75rem; letter-spacing: .2em;
-	color: var(--muted); border-top: 4px solid var(--border); border-radius: 50% 50% 0 0 / 14px 14px 0 0; padding-top: 6px;
+	position: relative; margin: .5rem auto 1.75rem; max-width: 460px; text-align: center; font-size: .7rem; font-weight: 700;
+	letter-spacing: .5em; color: var(--muted); padding-top: 14px;
 }
-.seatmap { display: grid; gap: 6px; justify-content: safe center; /* 'safe': if it ever overflows, row A stays reachable */ margin-bottom: 1rem; overflow-x: auto; padding-bottom: 4px; }
-.seat-row { display: flex; gap: 6px; align-items: center; }
-.row-label { width: 1.5rem; color: var(--muted); font-size: .8rem; text-align: center; }
+.screen::before { /* the curved screen, glowing towards the seats */
+	content: ''; position: absolute; left: 0; right: 0; top: 0; height: 18px; border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+	border-top: 4px solid var(--accent); box-shadow: 0 -6px 22px -4px var(--accent);
+	filter: drop-shadow(0 10px 14px color-mix(in srgb, var(--accent) 35%, transparent));
+}
+.seatmap { display: grid; gap: 7px; justify-content: safe center; /* 'safe': if it ever overflows, row A stays reachable */ margin-bottom: 1.25rem; overflow-x: auto; padding: 4px 4px 6px; }
+.seat-row { display: flex; gap: 7px; align-items: center; }
+.row-label { width: 1.5rem; color: var(--muted); font-size: .75rem; font-weight: 700; text-align: center; }
 .seat {
-	width: 2.25rem; height: 2.25rem; border-radius: 8px 8px 4px 4px; font: inherit; font-size: .72rem; cursor: pointer;
+	width: 2.3rem; height: 2.2rem; border-radius: 10px 10px 5px 5px; font: inherit; font-size: .72rem; font-weight: 600; cursor: pointer;
 	background: var(--seat-free); border: 1px solid var(--seat-free-border); color: var(--text);
+	border-bottom-width: 4px; /* the seat's front edge */
+	transition: transform .12s, background .12s, border-color .12s, box-shadow .12s;
 }
 /* Seat categories: the seat's outline and a bar on its top edge say which one it is */
 .seat.cat-premium { border-color: var(--cat-premium); box-shadow: inset 0 3px 0 var(--cat-premium); }
@@ -296,13 +304,17 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .legend .l-cat.cat-regular { border-color: var(--seat-free-border); }
 .legend .l-cat.cat-premium { border-color: var(--cat-premium); box-shadow: inset 0 3px 0 var(--cat-premium); }
 .legend .l-cat.cat-recliner { border-color: var(--cat-recliner); box-shadow: inset 0 3px 0 var(--cat-recliner); }
-.seat:hover:not([aria-disabled="true"]) { border-color: var(--accent); }
+.seat:hover:not([aria-disabled="true"]) { border-color: var(--accent); transform: translateY(-2px); }
 .seat.held { background: var(--seat-held); border-color: var(--seat-held-border); cursor: not-allowed; }
 .seat.booked { background: var(--seat-booked); border-color: var(--seat-booked); color: var(--seat-booked-text); cursor: not-allowed; }
-.seat.mine { background: var(--seat-held); border: 2px solid var(--accent); }
-.seat.selected { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
-.legend { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; font-size: .85rem; color: var(--muted); margin-bottom: 1rem; }
-.legend i { display: inline-block; width: .9rem; height: .9rem; border-radius: 3px; vertical-align: -2px; margin-right: .3rem; border: 1px solid; }
+.seat.mine { background: var(--seat-held); border: 2px solid var(--accent); border-bottom-width: 4px; }
+.seat.selected {
+	background: var(--accent); border-color: var(--accent-strong); color: var(--accent-text); font-weight: 750;
+	box-shadow: 0 0 0 3px var(--accent-soft), 0 6px 16px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.legend { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; font-size: .82rem; color: var(--muted); margin-bottom: .75rem; }
+.legend > span { display: inline-flex; align-items: center; padding: .2rem .65rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.legend i { display: inline-block; width: .9rem; height: .85rem; border-radius: 4px 4px 2px 2px; margin-right: .4rem; border: 1px solid; }
 .legend .l-free { background: var(--seat-free); border-color: var(--seat-free-border); }
 .legend .l-sel { background: var(--accent); border-color: var(--accent); }
 .legend .l-held { background: var(--seat-held); border-color: var(--seat-held-border); }
@@ -461,7 +473,10 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	/* 10 seats + the row label must fit a 360px-wide phone */
 	.seatmap, .seat-row { gap: 4px; }
 	.row-label { width: 1rem; }
-	.seat { width: 1.6rem; height: 1.6rem; font-size: .6rem; border-radius: 6px 6px 3px 3px; }
+	.seat { width: 1.5rem; height: 1.65rem; font-size: .6rem; border-radius: 7px 7px 3px 3px; border-bottom-width: 3px; }
+	.auditorium { padding: 18px 6px 14px; }
+	.seatmap { padding: 2px 0 6px; }
+	.aisle { width: 10px; }
 	.who { display: none; }
 	.topbar { gap: .5rem; }
 	.nav { gap: .15rem; }

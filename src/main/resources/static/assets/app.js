@@ -422,7 +422,7 @@ async function renderShow(showId) {
 		<h1>${esc(show.title)}</h1>
 		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(runtimeText(show.runtimeMinutes))} · <span id="seat-prices"></span></p>
 		<p>${show.ratingCount ? `${ratingSummary(show)} · ` : ''}<a href="#/film/${esc(show.filmId)}">About the film and other showtimes</a></p>
-		<div class="card">
+		<div class="card auditorium">
 			<div class="screen">SCREEN</div>
 			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
 			<div class="seatmap" id="seatmap" role="group" aria-label="Seat map" aria-describedby="seatmap-help"></div>
