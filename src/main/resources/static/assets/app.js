@@ -1263,11 +1263,14 @@ async function renderTicket(bookingId) {
 	app.innerHTML = `
 		<a href="#/bookings" class="small">← My bookings</a>
 		<div class="card ticket">
-			<p class="muted small">BookMySeat e-ticket · booking #${ticket.bookingId}</p>
-			<h1>${esc(ticket.showTitle)}</h1>
-			<p>${esc(ticket.venueName)} · ${esc(when.format(new Date(ticket.showStartTime)))}</p>
+			<div class="ticket-top">
+				<p class="ticket-label">BookMySeat e-ticket · booking #${ticket.bookingId}</p>
+				<h1>${esc(ticket.showTitle)}</h1>
+				<p>${esc(ticket.venueName)} · ${esc(when.format(new Date(ticket.showStartTime)))}</p>
+				<p class="seats">Seats <strong>${esc(ticket.seats.join(', '))}</strong></p>
+			</div>
+			<div class="ticket-tear" aria-hidden="true"></div>
 			<img class="qr" src="${qr}" alt="Ticket QR code for booking ${ticket.bookingId}" width="260" height="260">
-			<p class="seats">Seats <strong>${esc(ticket.seats.join(', '))}</strong></p>
 			<p class="muted small">${esc(ticket.holderName)} · <code>${esc(ticket.code)}</code></p>
 			${ticket.checkedInAt
 				? `<p class="status CONFIRMED">CHECKED IN ${esc(when.format(new Date(ticket.checkedInAt)))}</p>`

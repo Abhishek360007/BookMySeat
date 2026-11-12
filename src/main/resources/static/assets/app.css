@@ -378,11 +378,26 @@ dialog::backdrop { background: rgb(8 6 10 / .6); backdrop-filter: blur(3px); }
 .center { justify-content: center; }
 .w-6 { width: 6rem; }
 
-/* E-ticket */
-.ticket { max-width: 380px; margin: 12px auto 0; text-align: center; }
-.ticket .qr { display: block; margin: 12px auto; width: 260px; height: 260px; background: #fff; padding: 8px; border-radius: 8px; image-rendering: pixelated; }
-.ticket .seats { font-size: 1.1rem; }
-.ticket code { word-break: break-all; }
+/* E-ticket: a ticket stub, the details on a red band, a torn perforation, the QR code under it */
+.card.ticket { max-width: 400px; margin: 12px auto 0; text-align: center; padding: 0 0 20px; overflow: hidden; border-radius: 20px; }
+.ticket-top { padding: 22px 22px 18px; color: #fff; background: linear-gradient(150deg, #e0263f, #8e0c22); }
+.ticket-top h1 { color: #fff; font-size: 1.7rem; margin: .2rem 0 .4rem; }
+.ticket-top p { margin: .2rem 0; }
+.ticket-label { font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #ffe1e5; }
+.ticket-tear { /* half circles cut from each side, a dashed line between them */
+	position: relative; height: 24px; margin: 0 0 6px;
+	background: linear-gradient(90deg, var(--border) 50%, transparent 0) center / 12px 2px repeat-x;
+}
+.ticket-tear::before, .ticket-tear::after {
+	content: ''; position: absolute; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
+}
+.ticket-tear::before { left: -13px; }
+.ticket-tear::after { right: -13px; }
+.ticket .qr { display: block; margin: 12px auto; width: 240px; height: 240px; background: #fff; padding: 10px; border-radius: 12px; image-rendering: pixelated; box-shadow: var(--shadow); }
+.ticket .seats { font-size: 1.15rem; }
+.ticket .seats strong { font-size: 1.3rem; letter-spacing: .03em; }
+.ticket code { word-break: break-all; background: var(--surface-2); padding: .1rem .4rem; border-radius: 6px; }
+.ticket > p, .ticket > .row { padding: 0 20px; }
 
 /* Films */
 .synopsis { max-width: 70ch; white-space: pre-line; }
