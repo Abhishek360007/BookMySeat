@@ -365,6 +365,9 @@ dialog::backdrop { background: rgb(8 6 10 / .6); backdrop-filter: blur(3px); }
 .auth-form { display: grid; gap: .75rem; }
 .auth-form label { display: grid; gap: .3rem; font-size: .9rem; font-weight: 550; }
 .auth-form h2 { margin-top: 0; font-size: 1.5rem; }
+/* The small links under the form: each at least 24px tall, so they are easy to tap */
+.auth-form .small { line-height: 1.9; }
+.auth-form .small .link, .auth-form .small a { display: inline-block; min-height: 24px; }
 .auth-form label[hidden] { display: none; }
 .form-error { color: var(--danger); margin: 0; font-size: .9rem; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 50; max-width: min(92vw, 360px); }

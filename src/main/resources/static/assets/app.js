@@ -1433,7 +1433,8 @@ function route() {
 /** The top bar link of the section you're in is marked (aria-current), so it is clear where you are. */
 function markNav(path) {
 	const section = path.startsWith('/admin') ? '#/admin' : path.startsWith('/bookings') || path.startsWith('/ticket') ? '#/bookings'
-		: path.startsWith('/account') ? '#/account' : '#/';
+		: path.startsWith('/account') ? '#/account'
+		: path === '/' || /^\/(film|show|review)\//.test(path) ? '#/' : null; // the rest (password pages...) is no section
 	document.querySelectorAll('.nav a').forEach((link) => {
 		if (link.getAttribute('href') === section) link.setAttribute('aria-current', 'page');
 		else link.removeAttribute('aria-current');
