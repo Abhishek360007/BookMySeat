@@ -320,9 +320,20 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .legend .l-held { background: var(--seat-held); border-color: var(--seat-held-border); }
 .legend .l-booked { background: var(--seat-booked); border-color: var(--seat-booked); }
 
-.summary { position: sticky; bottom: 12px; display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-.timer { font-variant-numeric: tabular-nums; font-weight: 650; }
-.timer.low { color: var(--danger); }
+/* The booking bar: stays in view at the foot of the screen while you pick, see-through over the seats */
+.summary {
+	position: sticky; bottom: 12px; z-index: 5; display: flex; gap: .75rem 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap;
+	margin-top: 14px; border-top: 3px solid var(--accent); box-shadow: var(--shadow-lift);
+	background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.summary > div:first-child { font-size: 1.05rem; }
+.summary select { width: auto; padding: .4rem .7rem; }
+.timer {
+	display: inline-block; font-variant-numeric: tabular-nums; font-weight: 700; padding: .1rem .6rem; border-radius: 999px;
+	background: var(--accent-soft); color: var(--accent);
+}
+.timer.low { color: #fff; background: #b42318; animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { to { box-shadow: 0 0 0 4px color-mix(in srgb, #b42318 25%, transparent); } }
 
 /* Bookings */
 .bookings { display: grid; gap: 12px; }
@@ -351,8 +362,15 @@ dialog::backdrop { background: rgb(8 6 10 / .6); backdrop-filter: blur(3px); }
 	font-size: .9rem; border-left: 4px solid var(--accent); animation: rise .2s ease-out;
 }
 .toast.error { background: #b42318; color: #fff; border-left-color: #fff; }
-.success { text-align: center; padding: 32px 16px; }
-.success .big { font-size: 2.5rem; }
+.success { text-align: center; padding: 40px 20px; }
+.success .big {
+	display: grid; place-items: center; width: 84px; height: 84px; margin: 0 auto 16px; border-radius: 50%; font-size: 2.4rem;
+	background: radial-gradient(circle, var(--accent-soft), transparent 70%); box-shadow: 0 0 0 1px var(--border), 0 0 40px color-mix(in srgb, var(--accent) 30%, transparent);
+	animation: pop .4s cubic-bezier(.2, 1.4, .4, 1);
+}
+@keyframes pop { from { transform: scale(.6); opacity: 0; } }
+.success h1 { margin-bottom: .5rem; }
+.success .row { margin-top: 16px; }
 .test-note { margin: 12px 0 0; padding: 10px 14px; border: 1px dashed var(--accent); border-radius: var(--radius); font-size: .9rem; }
 .test-note code { background: var(--seat-free); padding: .05rem .35rem; border-radius: 4px; }
 .narrow { max-width: 420px; }
@@ -502,13 +520,13 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 
 /* Promo code under the held seats: its own line in the summary */
-.summary .promo { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.summary .promo { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding-top: .75rem; border-top: 1px dashed var(--border); }
 .summary .promo input { width: 12rem; text-transform: uppercase; }
 .summary .promo .form-error { flex-basis: 100%; }
 .btn-small { padding: .35rem .7rem; font-size: .9rem; }
 .promo-off { color: var(--muted); }
 
 /* "Pick best seats" on its own line under the seat count */
-.summary .pick { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.summary .pick { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding-top: .75rem; border-top: 1px dashed var(--border); }
 .summary .pick select { width: auto; }
 .summary .pick-field { display: inline-flex; gap: .4rem; align-items: center; } /* a label wraps with its list */
