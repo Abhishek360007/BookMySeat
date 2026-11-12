@@ -31,8 +31,9 @@
 	color-scheme: light;
 }
 
+/* Dark: what the system asks for, unless the theme button chose light; or chosen with the button */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--bg: #0c0b10;
 		--bg-glow: #2a0f16;
 		--surface: #16151d;
@@ -60,6 +61,34 @@
 		--star: #fbbf24;
 		color-scheme: dark;
 	}
+}
+:root[data-theme="dark"] {
+	--bg: #0c0b10;
+	--bg-glow: #2a0f16;
+	--surface: #16151d;
+	--surface-2: #1e1c27;
+	--text: #f2eff5;
+	--muted: #a8a3b3;
+	--border: #2c2a37;
+	--accent: #ff4d5e;
+	--accent-strong: #ff7482;
+	--accent-text: #14060a;
+	--accent-soft: #3a1219;
+	--gold: #f3b941;
+	--seat-free: #24222f;
+	--seat-free-border: #4d4a60;
+	--seat-held: #4a3518;
+	--seat-held-border: #c48a2c;
+	--seat-booked: #1b1a22;
+	--seat-booked-text: #5f5b6c;
+	--cat-premium: #e0a82e;
+	--cat-recliner: #d070b6;
+	--ok: #4cc79a;
+	--danger: #ff7b6e;
+	--shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .35);
+	--shadow-lift: 0 2px 4px rgb(0 0 0 / .5), 0 18px 44px rgb(0 0 0 / .55);
+	--star: #fbbf24;
+	color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -95,6 +124,10 @@ main.container { flex: 1; padding-top: 24px; padding-bottom: 32px; }
 .nav { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; justify-content: flex-end; }
 .nav a { color: var(--text); text-decoration: none; }
 .nav a:hover { color: var(--accent); }
+/* Theme button: a moon in light mode, a sun in dark mode (decoration: the name is the hidden "Dark theme") */
+.btn-icon { width: 2.5rem; height: 2.5rem; padding: 0; display: inline-grid; place-items: center; }
+.theme-btn::before { content: '³E' / ''; font-size: 1.15rem; line-height: 1; }
+.theme-btn[aria-pressed="true"]::before { content: '°0' / ''; }
 a.who { text-decoration: none; }
 a.who:hover { color: var(--accent); }
 .who { color: var(--muted); font-size: .875rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

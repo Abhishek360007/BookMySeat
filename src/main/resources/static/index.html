@@ -7,6 +7,7 @@
 	<meta name="description" content="Book movie seats: live seat map, 5-minute holds, no double bookings.">
 	<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 	<link rel="stylesheet" href="/assets/app.css">
+	<script src="/assets/theme.js"></script>
 	<script type="module" src="/assets/app.js"></script>
 </head>
 <body>
@@ -21,6 +22,7 @@
 			<a href="#/bookings" data-auth-only hidden>My bookings</a>
 			<a href="#/admin" data-admin-only hidden>Admin</a>
 			<a class="who" href="#/account" data-auth-only hidden title="Your account"></a>
+			<button class="btn btn-ghost btn-icon theme-btn" id="theme-btn" type="button" aria-pressed="false"><span class="sr-only">Dark theme</span></button>
 			<button class="btn btn-ghost" id="login-btn" type="button">Log in</button>
 			<button class="btn btn-ghost" id="logout-btn" type="button" data-auth-only hidden>Log out</button>
 		</nav>
