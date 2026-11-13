@@ -20,8 +20,8 @@
 [![Demo video: picking seats, holding them with a countdown, then booking](docs/demo/demo-preview.gif)](https://abhishek360007.github.io/BookMySeat/demo/)
 
 <p>
-  <img src="docs/screenshots/seat-map-held.png" alt="Seat map with two seats held and a countdown" width="68%">
-  <img src="docs/screenshots/phone.png" alt="The seat map on a phone" width="24%">
+  <img src="docs/screenshots/seat-map-held.png" alt="Seat map in the dark theme: the film's poster, the steps bar at Hold and review, a glowing curved screen, seats C3 and C4 held for you with 4:59 left, two seats held by someone else and booked seats greyed out" width="68%">
+  <img src="docs/screenshots/phone.png" alt="The seat map on a phone in the light theme, with the booking bar at the foot of the screen" width="24%">
 </p>
 
 ## Highlights
@@ -40,6 +40,7 @@
 - **Films and their screenings:** the home page lists films, each with its poster, rating, runtime, the next showtime and the cheapest seat; a film's page has its showtimes by day (in your city) and its reviews. Shows join a film by id or by title (created on the fly, one per title even when several shows are created at once), and the runtime ends the calendar event and times the review email. See [Films](#films).
 - **Follow a film:** one email per follower when a film gets new showtimes, all of them together, 10 minutes after they're added (time to fix a mistake); each show announced once (ShedLock runs the job on one instance, and its row locks keep a second run off the same shows). See [Following films](#following-films).
 - **Reviews from people who went:** a rating from 1 to 5 and an optional text, only with a confirmed booking for a screening that has started, one per person per film whichever screening they saw. The average sits on the film itself, kept exact by atomic updates in the review's transaction (6 saves by one person and 8 people at once give one review each and the right sum; the test fails without the lock), a "How was it?" email after the show, and admin moderation. See [Reviews](#reviews).
+- **A cinema-style web app with no build step:** a featured film on a lit band, a poster grid with city chips, film pages lit by their own poster, a seat map under a glowing screen with a steps bar, a ticket-stub e-ticket, light and dark themes with a toggle; plain HTML, CSS and JavaScript modules served by the API itself. See [Web app](#web-app).
 - **Accessible web app:** an axe-core audit of every page (WCAG 2.2 AA, phone and desktop, light and dark, 320 px wide) passes with no violations, and a browser test books seats with the keyboard alone: the seat map is one Tab stop with arrow keys, focus survives the live refresh, and screen readers hear about holds and waitlist offers. See [Accessibility](#accessibility).
 - **Safe retries:** `Idempotency-Key` on booking confirmation, so a client that times out and retries gets the same booking back instead of an error or a duplicate.
 - **Seat categories:** Regular, Premium and Recliner rows at their own prices, with aisles in the seat map. The total adds each seat's price on the server, and a booking keeps that total when prices or the layout change later.
@@ -220,6 +221,8 @@ sequenceDiagram
     A-->>D: 200 "Welcome, Tina · A1, A2"  or  409 "Already checked in at 7:02 pm"
 ```
 
+<img src="docs/screenshots/ticket.png" alt="The e-ticket as a ticket stub: film, venue, time and seats on a red band, a torn perforation, the QR code, the ticket code and Add to calendar" width="49%">
+
 | Question | Answer |
 |---|---|
 | What's in the QR? | `T1.<booking id>.<signature>`: the first 128 bits of HMAC-SHA256 over the booking id. Without the server's key nobody can make a code for another booking, so booking ids being guessable doesn't matter |
@@ -253,7 +256,7 @@ sequenceDiagram
     W->>A: confirm (or pay): booked, off the waitlist
 ```
 
-<img src="docs/screenshots/waitlist-offer.png" alt="Show page with seats A1 and A2 held from the waitlist and a 14:51 countdown" width="68%">
+<img src="docs/screenshots/waitlist-offer.png" alt="Show page with seats A1 and A2 held from the waitlist, a 14:54 countdown and Decline or Confirm booking" width="68%">
 
 | Question | Answer |
 |---|---|
@@ -306,8 +309,8 @@ sequenceDiagram
 A film is what its screenings have in common: title, runtime, language, certificate (U, UA, A, S) and a synopsis. Admins keep them on the **Films** page; a show belongs to one film.
 
 <p>
-  <img src="docs/screenshots/home.png" alt="Home page: five films, each with its runtime, language, certificate, next showtime, number of showtimes and cheapest seat" width="49%">
-  <img src="docs/screenshots/film.png" alt="A film's page: its synopsis and three showtimes in Mumbai and Pune, grouped by day, each with its cheapest seat" width="49%">
+  <img src="docs/screenshots/home.png" alt="Home page in the dark theme: the search, city chips, The Monsoon Letters as the featured film, and five films as a poster grid with certificate badges, the next showtime and the cheapest seat (Dune, without a poster, shows its initials)" width="49%">
+  <img src="docs/screenshots/film.png" alt="A film's page in the light theme, lit by its poster: synopsis, Follow this film, and three showtimes in Mumbai and Pune grouped by day, each with its cheapest seat" width="49%">
 </p>
 
 ```mermaid
@@ -794,7 +797,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 27:** finishing: the shows' old rating columns dropped (V23, the second half of V22's two-release change), the web app speaks of films throughout, a seeded demo catalogue of five films and ten showtimes in two cities, fresh screenshots taken from a clean seeded database
 - [x] **Week 28:** film posters (any JPEG or PNG becomes a 480 × 720 JPEG, decoded with subsampling so a big upload can't fill the memory, served with a versioned URL and a year's caching; uploaded on the admin Films page; drawn posters for the demo) and following films (one email per follower when new showtimes are added, after a grace period, each show announced once; a toggle on the film page and the list in My bookings), with browser tests for both
 - [x] **Week 29:** a new look for the web app (a cinema palette in light and dark, a theme button that overrides the system setting, a poster grid on Home, film pages lit by their poster, a glowing screen over the seat map, a booking bar that stays in view, a ticket-stub e-ticket, restyled bookings, reviews and admin pages), with the accessibility audit passing again (155 checks) and a browser test for the theme button
-- [x] **Week 30:** more polish for the web app: a featured film on a lit band and city chips on Home, rating and certificate badges and **Book tickets** on the posters, shimmering placeholders while films load, the poster and a steps bar on the seat map page, an avatar in the top bar, a fuller footer, pages that rise in as they open (not with reduced motion); the audit and every browser flow pass
+- [x] **Week 30:** more polish for the web app: a featured film on a lit band and city chips on Home, rating and certificate badges and **Book tickets** on the posters, shimmering placeholders while films load, the poster and a steps bar on the seat map page, an avatar in the top bar, a fuller footer, pages that rise in as they open (not with reduced motion); the audit and every browser flow pass; fresh screenshots from a clean seeded database
 
 ## Status
 
@@ -807,7 +810,7 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 | Several cinema chains, seat maps per screen | A venue has one hall, and each show generates its own seat map |
 | Instant wake-up | Render's free tier sleeps after 15 idle minutes and takes 2 to 3 minutes to wake; the start page shows the wait. A paid instance stays awake |
 
-The demo video and its GIF at the top were recorded before films existed: the booking itself (seats, hold, countdown, confirm) is unchanged, but the home page now lists films.
+The demo video and its GIF at the top were recorded before films existed and before the Week 29 and 30 redesign: the booking itself (seats, hold, countdown, confirm) works the same, but every page looks different now. The screenshots in this README show the current design.
 
 ## Author
 

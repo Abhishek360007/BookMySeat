@@ -230,7 +230,7 @@ input:focus-visible, .btn:focus-visible, .seat:focus-visible, a:focus-visible, .
 .film-card-body { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 /* Home: a grid of posters, the details under each one */
 .film-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 22px; }
-.film-grid .film-card { flex-direction: column; gap: 0; padding: 0; overflow: hidden; transition: transform .2s, box-shadow .2s, border-color .2s; }
+.film-grid .film-card { flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; transition: transform .2s, box-shadow .2s, border-color .2s; }
 .film-grid .film-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lift); border-color: var(--accent); }
 .film-grid .film-card-body { padding: 14px 16px 16px; gap: .3rem; flex: 1; }
 .film-grid .price { margin-top: auto; padding-top: .35rem; font-size: .92rem; }
