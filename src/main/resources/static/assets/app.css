@@ -156,7 +156,12 @@ main.container { flex: 1; padding-top: 28px; padding-bottom: 48px; }
 .theme-btn[aria-pressed="true"]::before { content: '☀' / ''; }
 .nav a.who { color: var(--muted); }
 a.who:hover { color: var(--accent); }
-.who { color: var(--muted); font-size: .875rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .875rem; }
+.who-email { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar {
+	display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; flex: none;
+	font-size: .8rem; font-weight: 750; color: #fff; background: linear-gradient(140deg, #ff5a6b, #9d0f26);
+}
 
 /* Buttons */
 .btn {
@@ -521,9 +526,13 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The accent colour is too light on the banner's amber in dark mode: the link takes the text colour (still underlined) */
 .verify-banner .link { color: inherit; font-weight: 600; }
 .footer { border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: .85rem; margin-top: 24px; }
-.footer-inner { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 20px 16px; }
-.footer-brand { font-weight: 800; color: var(--text); letter-spacing: -.02em; }
-.footer-links { display: flex; gap: 1rem; }
+.footer-inner { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 24px; padding: 32px 16px; }
+.footer-about p { margin: .5rem 0 0; max-width: 42ch; line-height: 1.6; }
+.footer-brand { font-weight: 800; font-size: 1.1rem; color: var(--text); letter-spacing: -.02em; }
+.footer-col { display: flex; flex-direction: column; gap: .45rem; align-items: flex-start; }
+.footer-col h2 { font-size: .72rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; color: var(--text); margin: 0 0 .2rem; }
+.footer-col a { text-decoration: none; padding: 1px 0; }
+@media (max-width: 560px) { .footer-inner { grid-template-columns: 1fr 1fr; } .footer-about { grid-column: 1 / -1; } }
 .footer a { color: var(--muted); }
 .footer a:hover { color: var(--accent); }
 .empty { text-align: center; padding: 40px 20px; }
@@ -544,7 +553,7 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	.auditorium { padding: 18px 6px 14px; }
 	.seatmap { padding: 2px 0 6px; }
 	.aisle { width: 10px; }
-	.who { display: none; }
+	.who-email { display: none; }
 	.topbar { gap: .5rem; }
 	.nav { gap: .15rem; }
 	.nav a { padding: .35rem .55rem; }
@@ -579,3 +588,124 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .summary .pick { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding-top: .75rem; border-top: 1px dashed var(--border); }
 .summary .pick select { width: auto; }
 .summary .pick-field { display: inline-flex; gap: .4rem; align-items: center; } /* a label wraps with its list */
+
+/* ---------- Week 30: more cinema ---------- */
+
+/* Pages rise in as they open (not with reduced motion: the rule near the top switches every animation off) */
+#app > * { animation: enter .45s cubic-bezier(.2, .8, .2, 1) backwards; }
+#app > *:nth-child(2) { animation-delay: .05s; }
+#app > *:nth-child(3) { animation-delay: .1s; }
+#app > *:nth-child(n + 4) { animation-delay: .15s; }
+@keyframes enter { from { opacity: 0; transform: translateY(10px); } }
+.film-grid > .film-card { animation: enter .5s cubic-bezier(.2, .8, .2, 1) backwards; }
+.film-grid > .film-card:nth-child(2) { animation-delay: .05s; }
+.film-grid > .film-card:nth-child(3) { animation-delay: .1s; }
+.film-grid > .film-card:nth-child(4) { animation-delay: .15s; }
+.film-grid > .film-card:nth-child(n + 5) { animation-delay: .2s; }
+
+.btn-lg { padding: .75rem 1.6rem; font-size: 1.05rem; }
+
+/* City chips under the search */
+.city-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip {
+	display: inline-flex; align-items: center; min-height: 34px; padding: .3rem .95rem; border-radius: 999px; text-decoration: none;
+	font-size: .9rem; font-weight: 550; color: var(--text); background: var(--surface); border: 1px solid var(--border); transition: all .15s;
+}
+.chip:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.chip[aria-current="page"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+
+/* The featured film: always a dark, lit band (a cinema at night), whatever the theme */
+.spotlight {
+	position: relative; isolation: isolate; overflow: hidden; display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: center;
+	margin: 8px 0 36px; padding: 36px 40px; border-radius: 24px; background: #0c0b10; color: #f5f2f7;
+	box-shadow: 0 24px 60px rgb(20 0 6 / .35);
+}
+.spotlight-backdrop {
+	position: absolute; inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); object-fit: cover; z-index: -2;
+	filter: blur(50px) saturate(1.5); opacity: .7;
+}
+.spotlight::before {
+	content: ''; position: absolute; inset: 0; z-index: -1;
+	background: linear-gradient(90deg, rgb(12 11 16 / .94) 30%, rgb(12 11 16 / .55)),
+		radial-gradient(60% 80% at 0% 100%, rgb(255 77 94 / .25), transparent 70%);
+}
+.spotlight .eyebrow { color: #ff8a96; }
+.spotlight h2 { font-size: clamp(1.8rem, 1.2rem + 2.6vw, 3rem); font-weight: 800; letter-spacing: -.03em; margin: .2rem 0 .5rem; }
+.spotlight h2 a { color: #fff; text-decoration: none; }
+.spotlight h2 a:hover { color: #ffc2c9; }
+.spotlight-facts { color: #d4cfdb; margin: 0 0 .5rem; }
+.spotlight .rating, .spotlight .rating .star { color: #fbd36b; }
+.spotlight-actions { margin-top: 18px; gap: 1rem; }
+.spotlight .btn-primary { background: linear-gradient(180deg, #ff6372, #e0263f); color: #fff; box-shadow: 0 10px 30px rgb(255 60 80 / .45); }
+.spotlight .btn-primary:hover { background: #ff4d5e; color: #fff; }
+.spotlight-price { color: #e9e4ee; font-weight: 600; }
+.spotlight-poster .poster { width: 210px; border-radius: 14px; box-shadow: 0 20px 50px rgb(0 0 0 / .6); transform: rotate(2deg); transition: transform .3s; }
+.spotlight:hover .spotlight-poster .poster { transform: rotate(0) scale(1.02); }
+.spotlight :focus-visible { outline-color: #fff; }
+
+/* "All films" with the count beside it */
+.section-head { display: flex; align-items: baseline; gap: .75rem; margin: 0 0 14px; }
+.section-head h2 { margin: 0; }
+
+/* Badges on the posters, and "Book tickets" sliding up on hover */
+.badge {
+	position: absolute; top: 10px; z-index: 1; padding: .15rem .5rem; border-radius: 6px; font-size: .72rem; font-weight: 750;
+	letter-spacing: .04em; color: #fff; background: rgb(12 11 16 / .78); backdrop-filter: blur(6px); border: 1px solid rgb(255 255 255 / .18);
+}
+.badge-cert { right: 10px; }
+.badge-rating { left: 10px; color: #fbd36b; }
+.card-cta {
+	position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 1; padding: .55rem; border-radius: 999px; text-align: center;
+	font-weight: 700; font-size: .9rem; color: #fff; background: #e0263f; box-shadow: 0 8px 20px rgb(224 38 63 / .45);
+	opacity: 0; transform: translateY(10px); transition: opacity .2s, transform .2s;
+}
+.film-card:hover .card-cta, .film-card:focus-visible .card-cta { opacity: 1; transform: none; }
+@media (hover: none) { .card-cta { display: none; } }
+
+/* Loading: shimmering shapes where the cards will be */
+.skeleton-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; gap: 10px; padding-bottom: 16px; box-shadow: none; }
+.sk {
+	display: block; border-radius: 8px; margin: 0 16px;
+	background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 60%, var(--border)) 50%, var(--surface-2) 75%) 0 0 / 200% 100%;
+	animation: shimmer 1.3s linear infinite;
+}
+.sk-poster { aspect-ratio: 2 / 3; margin: 0; border-radius: 0; }
+.sk-line { height: 14px; }
+.sk-line.short { width: 55%; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+.empty-icon { font-size: 2.6rem; margin-bottom: .25rem; }
+
+/* Seat map page: the poster beside the title, then the steps */
+.show-head { display: flex; gap: 20px; align-items: center; margin-bottom: 18px; }
+.show-head h1 { margin-bottom: .35rem; }
+.show-head p { margin: .25rem 0; }
+.show-poster:empty { display: none; }
+.show-poster .poster { box-shadow: var(--shadow-lift); border-radius: 10px; }
+.steps { list-style: none; display: flex; gap: 6px; padding: 0; margin: 0 0 16px; counter-reset: step; flex-wrap: wrap; }
+.steps li {
+	counter-increment: step; display: inline-flex; align-items: center; gap: .5rem; padding: .35rem .9rem .35rem .4rem;
+	border-radius: 999px; font-size: .88rem; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border);
+}
+.steps li::before {
+	content: counter(step); display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+	font-size: .78rem; font-weight: 750; background: var(--surface-2); color: var(--muted);
+}
+.steps li[aria-current="step"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.steps li[aria-current="step"]::before { background: var(--accent); color: var(--accent-text); }
+.steps li.done { color: var(--text); }
+.steps li.done::before { content: '✓'; background: var(--ok); color: #fff; }
+
+@media (max-width: 720px) {
+	.spotlight { grid-template-columns: 1fr; padding: 26px 22px; }
+	.spotlight-poster { display: none; }
+}
+@media (max-width: 560px) {
+	.show-head { gap: 14px; align-items: flex-start; }
+	.show-head .poster.thumb { width: 64px; }
+	.steps li { font-size: .8rem; padding-right: .7rem; }
+}
+@media (forced-colors: active) {
+	.steps li[aria-current="step"] { border: 2px solid Highlight; }
+	.chip[aria-current="page"] { border: 2px solid Highlight; }
+}

@@ -178,7 +178,11 @@ function updateNav() {
 	const loggedIn = Boolean(state.user);
 	document.querySelectorAll('[data-auth-only]').forEach((el) => { el.hidden = !loggedIn; });
 	document.getElementById('login-btn').hidden = loggedIn;
-	document.querySelector('.who').textContent = state.user ? state.user.email : '';
+	// Your initial in a circle, then the email (hidden on phones; the circle stays)
+	const who = document.querySelector('.who');
+	who.innerHTML = state.user
+		? `<span class="avatar" aria-hidden="true">${esc([...(state.user.name || state.user.email)][0].toUpperCase())}</span><span class="who-email">${esc(state.user.email)}</span>`
+		: '';
 	document.querySelectorAll('[data-admin-only]').forEach((el) => { el.hidden = state.user?.role !== 'ADMIN'; });
 	// Verification is optional: unverified users can still book, they just see this reminder
 	document.getElementById('verify-banner').hidden = !loggedIn || state.user.emailVerified !== false;
@@ -269,6 +273,32 @@ function requireLogin() {
 
 // ---------- Pages ----------
 
+/** Grey shapes where the films will be, shimmering while they load (hidden from screen readers, which hear the text) */
+function skeletonCards(count = 5) {
+	const card = '<div class="card skeleton-card"><span class="sk sk-poster"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span></div>';
+	return `<div class="shows film-grid" aria-hidden="true">${card.repeat(count)}</div><p class="sr-only">Loading films…</p>`;
+}
+
+/** The first film with a poster, as a large banner at the top of Home (only on the plain first page). */
+function spotlightHtml(film) {
+	const next = film.nextShows[0];
+	return `
+		<section class="spotlight" aria-labelledby="spotlight-title">
+			${film.posterUrl ? `<img class="spotlight-backdrop" src="${esc(film.posterUrl)}" alt="" aria-hidden="true">` : ''}
+			<div class="spotlight-body">
+				<p class="eyebrow">Featured · next show ${esc(when.format(new Date(next.startTime)))}</p>
+				<h2 id="spotlight-title"><a href="#/film/${film.id}">${esc(film.title)}</a></h2>
+				<p class="spotlight-facts">${filmFacts(film)}</p>
+				${film.ratingCount ? `<p>${ratingSummary(film)}</p>` : ''}
+				<div class="row spotlight-actions">
+					<a class="btn btn-primary btn-lg" href="#/film/${film.id}" aria-label="Book tickets for ${esc(film.title)}">Book tickets</a>
+					<span class="spotlight-price">${film.upcomingShows} showtime${film.upcomingShows > 1 ? 's' : ''} · from ${esc(money.format(film.fromPrice))}</span>
+				</div>
+			</div>
+			<span class="spotlight-poster" aria-hidden="true">${posterImage(film, 'cover')}</span>
+		</section>`;
+}
+
 async function renderHome(params) {
 	const q = params.get('q') || '';
 	const city = params.get('city') || '';
@@ -283,8 +313,10 @@ async function renderHome(params) {
 				<input name="city" placeholder="City" value="${esc(city)}" aria-label="City">
 				<button class="btn btn-primary">Search</button>
 			</form>
+			<nav class="city-chips" id="city-chips" aria-label="Cities" hidden></nav>
 		</section>
-		<div id="results"><p class="muted">Loading films…</p></div>`;
+		<div id="spotlight"></div>
+		<div id="results">${skeletonCards()}</div>`;
 
 	document.getElementById('search').onsubmit = (event) => {
 		event.preventDefault();
@@ -298,16 +330,50 @@ async function renderHome(params) {
 	if (city) query.set('city', city);
 	const results = await api(`/api/films?${query}`);
 	const box = document.getElementById('results');
+	if (!box) return; // left the page while this was loading
+
+	// Quick city filters: the cities of the films' next showtimes (and the one searched)
+	const cities = [...new Set([...results.content.flatMap((f) => f.nextShows.map((s) => s.city)), ...(city ? [city] : [])])]
+		.sort((a, b) => a.localeCompare(b));
+	if (cities.length > 1 || city) {
+		const cityLink = (c) => {
+			const p = new URLSearchParams();
+			if (q) p.set('q', q);
+			if (c) p.set('city', c);
+			const text = String(p);
+			return `#/${text ? `?${text}` : ''}`;
+		};
+		const chip = (c, label) => {
+			const on = c.toLowerCase() === city.toLowerCase();
+			return `<a class="chip" href="${esc(cityLink(c))}"${on ? ' aria-current="page"' : ''}>${esc(label)}</a>`;
+		};
+		const nav = document.getElementById('city-chips');
+		nav.innerHTML = chip('', 'All cities') + cities.map((c) => chip(c, c)).join('');
+		nav.hidden = false;
+	}
+
 	if (results.content.length === 0) {
-		box.innerHTML = `<div class="card empty"><p>No films showing match.</p></div>`;
+		box.innerHTML = `<div class="card empty"><div class="empty-icon" aria-hidden="true">🎬</div><p>No films showing match.</p>
+			<a class="btn btn-ghost" href="#/">See every film</a></div>`;
 		return;
 	}
-	// The link's name is the film's title; the rest of the card is read after it
+	if (!q && !city && page === 0) {
+		const featured = results.content.find((f) => f.posterUrl) ?? results.content[0];
+		document.getElementById('spotlight').innerHTML = spotlightHtml(featured);
+	}
+	// The link's name is the film's title; the rest of the card is read after it. The badges on the poster repeat
+	// what the text says, so they are hidden from screen readers
 	box.innerHTML = `
+		<div class="section-head"><h2>${q || city ? 'Results' : 'All films'}</h2>
+			<span class="muted small">${results.totalElements} film${results.totalElements === 1 ? '' : 's'}</span></div>
 		<div class="shows film-grid">
 			${results.content.map((film) => `
 				<a class="card show-card film-card" href="#/film/${film.id}${city ? `?city=${encodeURIComponent(city)}` : ''}">
-					<span class="poster-frame">${posterImage(film, 'cover')}</span>
+					<span class="poster-frame">${posterImage(film, 'cover')}
+						${film.certificate ? `<span class="badge badge-cert" aria-hidden="true">${esc(film.certificate)}</span>` : ''}
+						${film.ratingCount ? `<span class="badge badge-rating" aria-hidden="true">★ ${esc(Number(film.ratingAverage).toFixed(1))}</span>` : ''}
+						<span class="card-cta" aria-hidden="true">Book tickets</span>
+					</span>
 					<span class="film-card-body">
 						<span class="title">${esc(film.title)}</span>
 						<span class="muted small">${filmFacts(film)}</span>
@@ -419,9 +485,20 @@ async function renderShow(showId) {
 
 	app.innerHTML = `
 		<a href="#/" class="small">← All films</a>
-		<h1>${esc(show.title)}</h1>
-		<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(runtimeText(show.runtimeMinutes))} · <span id="seat-prices"></span></p>
-		<p>${show.ratingCount ? `${ratingSummary(show)} · ` : ''}<a href="#/film/${esc(show.filmId)}">About the film and other showtimes</a></p>
+		<div class="show-head">
+			<span class="show-poster" id="show-poster"></span>
+			<div>
+				<p class="eyebrow">Choose your seats</p>
+				<h1>${esc(show.title)}</h1>
+				<p class="muted">${esc(show.venueName)} · ${esc(when.format(new Date(show.startTime)))} · ${esc(runtimeText(show.runtimeMinutes))} · <span id="seat-prices"></span></p>
+				<p>${show.ratingCount ? `${ratingSummary(show)} · ` : ''}<a href="#/film/${esc(show.filmId)}">About the film and other showtimes</a></p>
+			</div>
+		</div>
+		<ol class="steps" aria-label="Booking steps">
+			<li data-step="1">Choose seats</li>
+			<li data-step="2">Hold and review</li>
+			<li data-step="3">${state.config.paymentsEnabled ? 'Pay' : 'Confirm'}</li>
+		</ol>
 		<div class="card auditorium">
 			<div class="screen">SCREEN</div>
 			<p class="sr-only" id="seatmap-help">Arrow keys move between seats, Space picks one.</p>
@@ -440,6 +517,20 @@ async function renderShow(showId) {
 			<div id="reviews"><p class="muted">Loading reviews…</p></div>
 		</section>`;
 	renderFilmReviews(show.filmId, new Date(show.startTime) <= new Date());
+	// The film's poster beside the title (the show itself doesn't carry it); decoration, so failing quietly is fine
+	api(`/api/films/${show.filmId}`).then((film) => {
+		const slot = document.getElementById('show-poster');
+		if (slot) slot.innerHTML = posterImage(film, 'thumb');
+	}).catch(() => {});
+	// Where you are in the booking: the current step is marked (aria-current), the ones before it are done
+	const markStep = (current) => {
+		app.querySelectorAll('.steps li').forEach((li) => {
+			const n = Number(li.dataset.step);
+			li.classList.toggle('done', n < current);
+			if (n === current) li.setAttribute('aria-current', 'step');
+			else li.removeAttribute('aria-current');
+		});
+	};
 
 	const rows = () => {
 		const byRow = new Map();
@@ -570,6 +661,7 @@ async function renderShow(showId) {
 			else pickCategory = '';
 			pickForm.onsubmit = pickBest;
 		}
+		markStep(hold ? 2 : 1);
 		restoreFocus();
 	};
 
