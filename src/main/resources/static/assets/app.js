@@ -48,15 +48,24 @@ function filmFacts(film) {
 }
 
 /**
- * A film's poster, or a placeholder with its initials. Decorative (alt=""): the title is always next to it.
- * width/height reserve its place, so the page doesn't jump as posters load.
+ * A film's poster, or, without one, a cover drawn from its title: the title set like a poster on one of six
+ * cinematic gradients (picked from the title, so a film always gets the same one), or its initials when small.
+ * Decorative (alt="", aria-hidden): the title is always next to it. width/height reserve its place, so the page
+ * doesn't jump as posters load.
  */
 function posterImage(film, size) {
 	if (film.posterUrl) {
 		return `<img class="poster ${size}" src="${esc(film.posterUrl)}" alt="" width="480" height="720" loading="lazy" decoding="async">`;
 	}
+	let hash = 0;
+	for (const ch of film.title) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+	const look = `ph-${hash % 6}`;
+	if (size === 'cover' || size === 'large') {
+		return `<span class="poster ${size} placeholder ${look}" aria-hidden="true"><span class="ph-tag">Now showing</span>`
+			+ `<span class="ph-title">${esc(film.title)}</span><span class="ph-foot">BookMySeat</span></span>`;
+	}
 	const initials = film.title.split(/\s+/).filter((w) => /^[\p{L}\p{N}]/u.test(w)).slice(0, 2).map((w) => [...w][0]).join('');
-	return `<span class="poster ${size} placeholder" aria-hidden="true">${esc(initials.toUpperCase())}</span>`;
+	return `<span class="poster ${size} placeholder ${look}" aria-hidden="true">${esc(initials.toUpperCase())}</span>`;
 }
 
 function priceLabel(show) {

@@ -309,7 +309,7 @@ sequenceDiagram
 A film is what its screenings have in common: title, runtime, language, certificate (U, UA, A, S) and a synopsis. Admins keep them on the **Films** page; a show belongs to one film.
 
 <p>
-  <img src="docs/screenshots/home.png" alt="Home page in the dark theme: the search, city chips, The Monsoon Letters as the featured film, and five films as a poster grid with certificate badges, the next showtime and the cheapest seat (Dune, without a poster, shows its initials)" width="49%">
+  <img src="docs/screenshots/home.png" alt="Home page in the dark theme: the search, city chips, The Monsoon Letters as the featured film, and five films as a poster grid with certificate badges, the next showtime and the cheapest seat (Dune, a real film without a poster, gets a cover drawn from its title)" width="49%">
   <img src="docs/screenshots/film.png" alt="A film's page in the light theme, lit by its poster: synopsis, Follow this film, and three showtimes in Mumbai and Pune grouped by day, each with its cheapest seat" width="49%">
 </p>
 
@@ -331,7 +331,7 @@ flowchart LR
 | And the runtime? | The calendar event ends at the start plus the runtime, and the "How was it?" email goes out 30 minutes after that |
 | Posters? | An admin uploads a JPEG or PNG (at most 5 MB) on the Films page; whatever comes in is stored as a 480 × 720 JPEG, cropped to 2:3 around the centre (`PosterImages`, plain Java with ImageIO, unit-tested). The type is read from the file's first bytes, not its name: a text file called `poster.png` is a `415`. The size is read from the header before decoding, and the image is decoded with subsampling (every n-th pixel), so even an 8000-pixel upload takes a few MB of memory on the 512 MB instance. Re-encoding drops the metadata (camera, location) |
 | Where do they live? | In Postgres, in their own table (`film_posters`, V24), so listing films never reads an image; `films.poster_version` says there is one. `GET /api/films/{id}/poster` serves it with an ETag (`304` when unchanged) and a year of `immutable` caching, which is safe because the URL in every film carries the poster's version: a new poster is a new URL. At this size (about 40 KB each) a database is fine; object storage and a CDN would come with many more |
-| No poster? | The card and the film page show the film's initials instead. The demo's made-up films have posters drawn in HTML and CSS ([`scripts/posters/make-posters.mjs`](scripts/posters/make-posters.mjs)); "Dune: Part Three" is a real film and keeps its initials |
+| No poster? | The card and the film page draw a cover from the title instead: the title set like a poster on one of six dark gradients with film-strip edges (picked from the title, so a film keeps its colour), or the initials where it's small. The demo's made-up films have posters drawn in HTML and CSS ([`scripts/posters/make-posters.mjs`](scripts/posters/make-posters.mjs)); "Dune: Part Three" is a real film and keeps a drawn cover |
 | Existing shows? | V22 made one film per title (ignoring case) with 180 minutes, the length assumed until then, moved the ratings from the shows to the films (counted again from the reviews) and kept the newest review where someone had reviewed two screenings of one film. The shows' own rating columns stay for one release, because the previous version still reads them for a moment during the deploy |
 
 ## Reviews
@@ -558,7 +558,7 @@ A small single-page app served by the same Spring Boot server at `/` (same origi
 
 | Feature | Detail |
 |---|---|
-| Films | The home page lists the films showing with their posters (title and city filters, paginated); a film's page has its poster, synopsis, showtimes by day (keeping the city searched) and reviews; the seat map links back to the film. Posters are decorative (`alt=""`, the title is beside them), lazy-loaded, with their size reserved so nothing jumps; a film without one shows its initials |
+| Films | The home page lists the films showing with their posters (title and city filters, paginated); a film's page has its poster, synopsis, showtimes by day (keeping the city searched) and reviews; the seat map links back to the film. Posters are decorative (`alt=""`, the title is beside them), lazy-loaded, with their size reserved so nothing jumps; a film without one gets a cover drawn from its title |
 | Live seat map | Available / held / booked, refreshed every 10 s, so other people's holds appear without reloading; seat categories with their prices, and aisles |
 | Hold with countdown | Held seats are outlined as yours; the hold is released automatically when the timer ends |
 | Pick best seats | Choose how many seats (and a type) and the server picks and holds the best ones together; which seats is announced, and a show without that many together says so |
