@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.2</version>
+		<version>4.2.0</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.abhishekraj</groupId>
@@ -28,8 +28,8 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
-		<shedlock.version>7.10.1</shedlock.version>
-		<datasource-micrometer.version>2.3.0</datasource-micrometer.version>
+		<shedlock.version>7.11.0</shedlock.version>
+		<datasource-micrometer.version>2.3.1</datasource-micrometer.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -124,7 +124,7 @@
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-			<version>3.2.0</version>
+			<version>3.2.1</version>
 		</dependency>
 
 		<dependency>
